@@ -1,0 +1,110 @@
+<html>
+    <head>
+        <title>testing svg graphs</title>
+        <script src="dist.js"></script>
+        <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+        <style>
+            body {
+                background: #eeeeee;
+                font-family: 'Roboto', sans-serif;
+            }
+            .container {
+                width: 100%;
+                height: 50vh;
+                box-sizing: border-box;
+                padding: 18px;
+            }
+            path {
+                mix-blend-mode: normal;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container"></div>
+        <script>
+            function createRandomData(count = 30, start = 0) {
+                const data = [];
+                for(let i = start; i < count + start; i++) {
+                    data.push({
+                        time: i,
+                        in: Math.round(Math.random() * 100),
+                        out: Math.round(Math.random() * 100),
+                        noise: Math.round(Math.random() * 25)
+                    })
+                }
+
+                return data;
+            }
+
+            let data = createRandomData(15);
+            let fill = true;
+            const graph = new svgAnimatedGraphs({
+                el: document.querySelector('.container'),
+                xAxisField: 'time',
+                fill,
+                opacity: 0.3,
+                offsetAnimate: true,
+                data: data,
+                interpolate: true,
+                units: 'mb',
+                seriesProperties: {
+                    noise: {
+                        'stroke-dasharray': '3,2'
+                    },
+                    out: {
+                        'stroke-width': 1
+                    }
+                }
+            });
+
+            function switchOptions() {
+                setTimeout(() => {
+                    setRandomOptions();
+                    setInterval(setRandomOptions, 5000);
+                }, 2500);
+            }
+
+            function setRandomOptions() {
+                fill = !fill;
+                graph.setOptions({
+                    fill,
+                    lineWidth: (Math.random() * 0.5) + 0.1,
+                    opacity: (Math.random() * 0.35) + 0.35
+                });
+            }
+
+            function addSeries() {
+                let si = 1;
+                setInterval(() => {
+                    si++;
+                    graph.setData(data.map(item => {
+                        item[`v${si}`] = Math.round(Math.random() * 25);
+                        return item;
+                    }));
+                }, 5000);
+            }
+
+            function randomData() {
+                setInterval(() => {
+                    graph.setData(createRandomData());
+                }, 5000);
+            }
+
+            function moveTime() {
+                setInterval(() => {
+                    data = data.concat(createRandomData(1, data.reduce((max, item) => Math.max(max, item.time), 0) + 1));
+                    data = data.slice(1, 31);
+                    graph.setData(data);
+                }, 5000);
+            }
+
+            // switchOptions();
+            moveTime();
+        </script>
+        <button onclick="graph.setOptions({fill: !graph.options.fill});">Toggle Line/Area</button>
+        <button onclick="graph.setOptions({interpolate: !graph.options.interpolate});">Toggle Interpolation</button>
+        <button onclick="graph.setOptions({offsetAnimate: !graph.options.offsetAnimate});">Toggle Offset Animation</button>
+        <button onclick="graph.setOptions({showExtent: !graph.options.showExtent});">Toggle Extent</button>
+        <button onclick="alert(JSON.stringify(graph.getLegendData(), null, 2));">Show Legend Data</button>
+    </body>
+</html>
