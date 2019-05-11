@@ -68,7 +68,7 @@ class svgAnimatedGraphs {
      * @property {number} [options.lineWidth=0.4] - width of lines when rendering without fill
      * @property {array} [options.colors] - an array of vector 3 values for graph dataset rendering
      * @property {number} [options.rounding=0.25] - amount of rounding to apply if interpolation is enabled
-     * @property {Extents} [options.extents} - absolute values for graph extents (by default these will be calculated from the data sets
+     * @property {Extents} [options.extents] - absolute values for graph extents (by default these will be calculated from the data sets
      */
 
     /**
@@ -133,11 +133,22 @@ class svgAnimatedGraphs {
         });
     }
 
+    /**
+     * set view height (mostly to enabled/disable top extent)
+     * @param {number} height - canvas render height
+     * @private
+     */
     _setViewableHeight(height) {
         const ratio = this._container.offsetWidth / this._container.offsetHeight;
         this._setAspectRatio(ratio, height);
     }
 
+    /**
+     * set aspect ratio of the canvas
+     * @param {number} ratio - width/height ratio
+     * @param {number} height - canvas render height
+     * @private
+     */
     _setAspectRatio(ratio, height) {
         if (height * ratio !== this._width) {
             this._width = height * ratio;

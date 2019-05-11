@@ -110,5 +110,5 @@ Options object
 | [options.lineWidth] | <code>number</code> | <code>0.4</code> | width of lines when rendering without fill |
 | [options.colors] | <code>array</code> |  | an array of vector 3 values for graph dataset rendering |
 | [options.rounding] | <code>number</code> | <code>0.25</code> | amount of rounding to apply if interpolation is enabled |
-| options.extents} | [<code>Extents</code>](#Extents) |  | absolute values for graph extents (by default these will be calculated from the data sets |
+| [options.extents] | [<code>Extents</code>](#Extents) |  | absolute values for graph extents (by default these will be calculated from the data sets |
 
