@@ -2,14 +2,15 @@
 
 const { shape, plainShapeObject, render, play, timeline } = require('wilderness');
 const rounding = require('./rounding');
+const svgParth = require('svgpath');
 
 const defaultOptions = {
     animateIn: true,
     interpolate: true,
     opacity: 0.7,
-    fill: true,
+    type: 'area',
     offsetAnimate: false,
-    lineWidth: 0.4,
+    lineWidth: 0.6,
     rounding: 0.25,
     width: '100%',
     height: '100%',
@@ -22,7 +23,15 @@ const defaultOptions = {
     showExtent: true,
 };
 
-const optionsAffectingRender = ['fill', 'colors', 'opacity', 'interpolate', 'line-width', 'extents', 'showExtent'];
+const optionsRerender = ['showExtent'];
+const optionsRedraw = ['type', 'colors', 'opacity', 'interpolate', 'lineWidth', 'extents'];
+const fillTypes = ['area', 'pie'];
+const lineTypes = ['line', 'area'];
+const roundTypes = ['donut', 'pie'];
+const barTypes = ['bar, column'];
+const extentTypes = [].concat(lineTypes, barTypes);
+const allowedTypes = [].concat(lineTypes, roundTypes, barTypes);
+const lineWeightMultiplier = {donut: 10};
 
 const svgNS = 'http://www.w3.org/2000/svg';
 
@@ -52,7 +61,7 @@ class svgAnimatedGraphs {
      * @property {string} [options.height=100%] - a valid size string to set to the height for the graph relative to the parent element
      * @property {boolean} [options.animateIn=true] - animate initial data from nothing
      * @property {boolean} [options.interpolate=true] - interpolate points to make the graph rounded
-     * @property {boolean} [options.fill=true] - fill the graph splines (if false a line graph is rendered)
+     * @property {string} [options.type=area] - graph type (line, area, more coming soon...)
      * @property {boolean} [options.offsetAnimate=true] - animate each dataset one at a time
      * @property {boolean} [options.showExtent=true] - show max y value extent line on graph
      * @property {number} [options.opacity=0.7] - opacity value for data set rendering
@@ -69,17 +78,28 @@ class svgAnimatedGraphs {
     constructor(options) {
         this.options = Object.assign({}, defaultOptions, options);
         this._listeners = {};
+
         if(!this.options.el) {
             throw new Error('you must provide a parent element | options.el');
         }
+
+        if(options.type && !allowedTypes.includes(options.type)) {
+            throw new Error(`type '${options.type}' no allowed.`);
+        }
+
         this.el = this.options.el;
+
         if(this.options.data) {
             this._validateData(this.options.data);
             this.data = this.options.data;
         }
+
         this._paths = [];
+        this._preRenderData = [];
+
         this._createCanvas();
         this.extents = this._getExtents(this.data);
+
         if(this.options.animateIn || !this.data) {
             this._createInitial(this.data);
         } else {
@@ -99,16 +119,31 @@ class svgAnimatedGraphs {
         this._canvas.setAttribute('viewBox', `0 0 ${renderWidth} ${renderHeight}`);
         this._canvas.setAttribute('width', this.options.width);
         this._canvas.setAttribute('height', this.options.height);
+        this._canvas.setAttribute('overflow', 'visible');
         this._canvas.setAttribute('preserveAspectRatio', 'none');
         this._canvas.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         this._canvas.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
         this._container.appendChild(this._canvas);
         this.el.appendChild(this._container);
+
+        this._listeners.canvasSizer && window.removeEventListener(this._listeners.canvasSizer);
+        window.addEventListener('resize', this._listeners.canvasSizer = () => {
+            this._render(0, false);
+        });
     }
 
     _setViewableHeight(height) {
-        this._canvas.setAttribute('viewBox', `0 ${renderHeight - height} ${renderWidth} ${height}`);
+        const ratio = this._container.offsetWidth / this._container.offsetHeight;
+        this._setAspectRatio(ratio, height);
+    }
+
+    _setAspectRatio(ratio, height) {
+        if (height * ratio !== this._width) {
+            this._width = height * ratio;
+        }
+        this._ratio = ratio / 100 * height;
+        this._canvas.setAttribute('viewBox', `0 ${renderHeight - height} ${this._width} ${height}`)
     }
 
     /**
@@ -178,7 +213,7 @@ class svgAnimatedGraphs {
     _getStyle(color, key) {
         let style = {};
 
-        if(this.options.fill) {
+        if(fillTypes.includes(this.options.type)) {
             style.fill = `rgba(${color[0]},${color[1]},${color[2]}, ${this.options.opacity})`;
             style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, 0)`
         } else {
@@ -186,7 +221,9 @@ class svgAnimatedGraphs {
             style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, ${this.options.opacity})`;
         }
 
-        style['stroke-width'] = this.options.lineWidth;
+        const multiplier = lineWeightMultiplier[this.options.type] || 1;
+
+        style['stroke-width'] = this.options.lineWidth * multiplier;
 
         if(this.options.seriesProperties) {
             const globalProps = Object.entries(this.options.seriesProperties).reduce((acc, [k, v]) => {
@@ -216,7 +253,7 @@ class svgAnimatedGraphs {
             points += ` L ${loc},${renderHeight - 0.1}`;
         }
 
-        if(this.options.fill) {
+        if(fillTypes.includes(this.options.type)) {
             points += `L ${renderHeight},${renderHeight} L 0,${renderHeight} Z`;
         }
 
@@ -333,20 +370,24 @@ class svgAnimatedGraphs {
     /**
      * update the options to change the rendering style etc
      * @param {Options} options - partial options block to update options
-     * @param {number} [duration=1000} - duration (in milliseconds) for animation if rerendering is required
+     * @param {number} [duration=1000} - duration (in milliseconds) for animation if rerender is required
      */
     setOptions(options, duration = 1000) {
         Object.assign(this.options, options);
 
-        const rerender = Object.keys(options).reduce((render, key) => {
-            if (optionsAffectingRender.includes(key)) {
-                return true;
-            }
-            return render;
-        }, false);
+        if(options.type && !allowedTypes.includes(options.type)) {
+            throw new Error(`type '${options.type}' no allowed.`);
+        }
+
+        const redraw = Object.keys(options).reduce((render, key) => optionsRedraw.includes(key) || render, false);
+        const rerender = Object.keys(options).reduce((render, key) => optionsRerender.includes(key) || render, false);
+
+        if(redraw) {
+            this.setData(this.data, duration);
+        }
 
         if(rerender) {
-            this.setData(this.data, duration);
+            this._render(0, false);
         }
     }
 
@@ -360,21 +401,60 @@ class svgAnimatedGraphs {
 
         this.data = data;
         this.extents = this._getExtents(this.data);
-        const fields = this._getFields(this.data);
+        const fields = this._getUnreservedFields(this.data);
 
         const xKey = this.options.xAxisField;
-        const paths = fields.filter(field => field !== xKey).map(field => this._createLine(xKey, field));
 
+        if (lineTypes.includes(this.options.type)) {
+            this._preRenderData = fields.map(field => this._createLine(xKey, field));
+        }
+        else if (roundTypes.includes(this.options.type)) {
+            this._preRenderData = fields.map(field => this._createSegment(xKey, field));
+        } 
+        else if (barTypes.includes(this.options.type)) {
+            throw new Error('not yet implemented');
+        }
+
+        this._render(duration);
+    }
+
+    /**
+     * render the data to the canvas
+     * @param {number} duration - duration of animation
+     * @param {boolean} animate - weather or not to animate the transition
+     * @private
+     */
+    _render(duration = 1000, animate = true) {
         const oldPaths = this._paths;
-        this._paths = paths.map(path => this._drawPath(path));
 
-        if(!oldPaths || oldPaths.length < 1) {
+        this._clearCanvas();
+
+        if(this.options.showExtent && extentTypes.includes(this.options.type)) {
+            this._setViewableHeight(110);
+            this._renderText();
+        } else {
+            this._setViewableHeight(100);
+        }
+
+        if(lineTypes.includes(this.options.type)) {
+            this._paths = this._preRenderData.map(this._drawLinePath.bind(this));
+        } else if (roundTypes.includes(this.options.type)) {
+            const total = this._preRenderData.reduce((acc, seg) => acc + seg.value, 0);
+            let rotationAcc = 0;
+            this._paths = this._preRenderData.map(segment => {
+                const path = this._drawRoundPath(segment, total, rotationAcc);
+                rotationAcc += segment.value;
+                return path;
+            });
+        } else {
+            throw new Error('not yet implemented');
+        }
+
+        if(!oldPaths || oldPaths.length < 1 || !animate || duration < 1) {
             return render(this._canvas, ...this._paths);
         }
 
-        const combinedPaths = paths.map((item, index) => shape(plainShapeObject(oldPaths[index] || oldPaths[0]), plainShapeObject(this._paths[index])));
-
-        this._clearCanvas();
+        const combinedPaths = this._paths.map((item, index) => shape(plainShapeObject(oldPaths[index] || oldPaths[0]), plainShapeObject(this._paths[index])));
 
         if (this.options.offsetAnimate) {
             const animation = timeline(...combinedPaths, {
@@ -391,19 +471,12 @@ class svgAnimatedGraphs {
                 play(animation);
             });
         }
-
-        if(this.options.showExtent) {
-            this._setViewableHeight(110);
-            this._renderText();
-        } else {
-            this._setViewableHeight(100);
-        }
     }
 
     /**
      * create a vector 2 point output for a single line dataset
      * @param {string} xKey - the value to use for the x axis
-     * @param {string} yKey - the value to use for the y axis
+     * @param {string} yKey - the value to use for the y axis for this line
      * @private
      */
     _createLine(xKey, yKey) {
@@ -426,6 +499,29 @@ class svgAnimatedGraphs {
     }
 
     /**
+     * create a spec for a pie/donug segment
+     * @param {string} xKey - the value to use for the x axis
+     * @param {string} yKey - the value to use for the y axis for this segment
+     * @returns {{color: (number[]|*), value: *, key: *}}
+     * @private
+     */
+    _createSegment(xKey, yKey) {
+        const index = this._getUnreservedFields(this.data).indexOf(yKey);
+        return {
+            key: yKey,
+            color: this.options.colors[index],
+            value: this.data.reduce((val, item) => {
+                const x = item[xKey];
+                const y = item[yKey];
+                if (typeof x === 'undefined' || typeof y === 'undefined') {
+                    return val;
+                }
+                return val + y;
+            }, 0)
+        }
+    }
+
+    /**
      * return the point as an SVG operation
      * @param {string} prefix - operation marker
      * @param {string} point - vector 2 point map
@@ -433,7 +529,7 @@ class svgAnimatedGraphs {
      * @private
      */
     _getPoint(prefix, point) {
-        return `${prefix} ${point[0]},${renderHeight - point[1]}`
+        return `${prefix} ${point[0] * this._ratio},${renderHeight - point[1]}`
     }
 
     /**
@@ -441,7 +537,7 @@ class svgAnimatedGraphs {
      * @param {array} data - new graph data
      * @private
      */
-    _drawPath(data) {
+    _drawLinePath(data) {
         let pathString = data.path.reduce((string, point) => {
             if(string === '') {
                 string = this._getPoint('M', point);
@@ -455,22 +551,67 @@ class svgAnimatedGraphs {
             pathString = rounding(pathString, 0.25, true);
         }
 
-        if(this.options.fill) {
+        if(fillTypes.includes(this.options.type)) {
             const last = data.path[data.path.length - 1];
             const first = data.path[0];
-            pathString += ` L ${last[0]}, ${renderHeight} L ${first[0]},${renderHeight} Z`;
+            pathString += `${this._getPoint(' L', [last[0], 0])}${this._getPoint(' L', [first[0], 0])} Z`;
         }
 
 
-        const pathEl = shape(Object.assign({}, this._getStyle(data.color, data.key), {
+       return shape(Object.assign({}, this._getStyle(data.color, data.key), {
             type: 'path',
             d: pathString,
             class: `plot-${data.key}-values`,
         }));
-
-        return pathEl;
     }
 
+    /**
+     * create a shape output for a pie/donut segment
+     * @param {array} data - new graph data
+     * @param {number} total - total of all values for pie
+     * @param {number} rotation - start rotation for segment
+     * @private
+     */
+    _drawRoundPath(data, total, rotation) {
+        const l = 50 - ((this.options.lineWidth * (lineWeightMultiplier[this.options.type] || 1)) / 2);
+        const xOffset = (50 * this._ratio) - l;
+        const yOffset = 10 + (50 - l);
+
+        const a = 360 * (data.value / total);
+        const R = 360 * (rotation / total);
+        const aCalc = (a > 180) ? 360 - a : a;
+        const aRad = aCalc * Math.PI / 180;
+        const z = Math.sqrt(2 * l * l - (2 * l * l * Math.cos(aRad)));
+
+        const x = aCalc <= 90 ? l * Math.sin(aRad) : l*Math.sin((180 - aCalc) * Math.PI / 180);
+
+        const Y = Math.sqrt(z * z - x * x);
+        const X = a <= 180 ? l + x : l - x;
+
+        let pathString;
+        if(fillTypes.includes(this.options.type)) {
+            pathString = `M ${l},${l} L ${l},0 A ${l},${l} 1 0,1 ${X},${Y} z`;
+        } else {
+            pathString = `M ${l},0 A ${l},${l} 1 0,1 ${X},${Y}`;
+        }
+
+        const transformed = svgParth(pathString)
+            .rotate(R, l, l)
+            .translate(xOffset, yOffset)
+            .round(4)
+            .toString();
+
+        return shape(Object.assign({}, this._getStyle(data.color, data.key), {
+            type: 'path',
+            d: transformed,
+            class: `plot-${data.key}-values`,
+        }));
+    }
+
+    /**
+     * get an array of keys from data to use as a legend
+     * @returns {{color: string, index: number, label: string}[]}
+     */
     getLegendData() {
         return this._getUnreservedFields(this.data).map((key, index) => {
             const color = this.options.colors[index];
@@ -482,6 +623,10 @@ class svgAnimatedGraphs {
         });
     }
 
+    /**
+     * render extent text
+     * @private
+     */
     _renderText() {
         const text = document.createElement('span');
         text.style.position = 'absolute';
@@ -491,13 +636,6 @@ class svgAnimatedGraphs {
         text.style.textTransform = 'uppercase';
         text.style.opacity = this.options.opacity;
 
-        this._listeners.textResize && window.removeEventListener(this._listeners.textResize);
-        this._listeners.textResize = window.addEventListener('resize', () => {
-            text.style.top = (this._container.offsetHeight / 110) * 1.5;
-            text.style.left = (this._container.offsetHeight / 110) * 1.5;
-            text.style.fontSize = (this._container.offsetHeight / 110) * 6;
-        });
-
         text.textContent = this.extents.y[1];
         if(this.options.units) {
             text.textContent += this.options.units;
@@ -506,7 +644,7 @@ class svgAnimatedGraphs {
         const line = shape({
             type: 'line',
             x1: 0,
-            x2: 100,
+            x2: this._width,
             y1: 10,
             y2: 10,
             stroke: `rgba(0,0,0,${this.options.opacity})`,

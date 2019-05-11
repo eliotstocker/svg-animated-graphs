@@ -12,9 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "browserify": "^16.2.3",
-    "parse-svg-path": "^0.1.2",
-    "round-svg-path": "^1.0.0",
-    "serialize-svg-path": "^0.1.0",
+    "svgpath": "^2.2.2",
     "wilderness": "^5.1.2"
   },
   "devDependencies": {

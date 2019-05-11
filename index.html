@@ -37,41 +37,23 @@
             }
 
             let data = createRandomData(15);
-            let fill = true;
             const graph = new svgAnimatedGraphs({
                 el: document.querySelector('.container'),
                 xAxisField: 'time',
-                fill,
                 opacity: 0.3,
                 offsetAnimate: true,
                 data: data,
                 interpolate: true,
                 units: 'mb',
-                seriesProperties: {
-                    noise: {
-                        'stroke-dasharray': '3,2'
-                    },
-                    out: {
-                        'stroke-width': 1
-                    }
-                }
+                // seriesProperties: {
+                //     noise: {
+                //         'stroke-dasharray': '3,2'
+                //     },
+                //     out: {
+                //         'stroke-width': 1
+                //     }
+                // }
             });
-
-            function switchOptions() {
-                setTimeout(() => {
-                    setRandomOptions();
-                    setInterval(setRandomOptions, 5000);
-                }, 2500);
-            }
-
-            function setRandomOptions() {
-                fill = !fill;
-                graph.setOptions({
-                    fill,
-                    lineWidth: (Math.random() * 0.5) + 0.1,
-                    opacity: (Math.random() * 0.35) + 0.35
-                });
-            }
 
             function addSeries() {
                 let si = 1;
@@ -101,10 +83,16 @@
             // switchOptions();
             moveTime();
         </script>
-        <button onclick="graph.setOptions({fill: !graph.options.fill});">Toggle Line/Area</button>
+        <select onchange="graph.setOptions({type: this.value});">
+            <option value="area">Area</option>
+            <option value="line">Line</option>
+            <option value="donut">Donut</option>
+            <option value="pie">Pie</option>
+        </select>
         <button onclick="graph.setOptions({interpolate: !graph.options.interpolate});">Toggle Interpolation</button>
         <button onclick="graph.setOptions({offsetAnimate: !graph.options.offsetAnimate});">Toggle Offset Animation</button>
         <button onclick="graph.setOptions({showExtent: !graph.options.showExtent});">Toggle Extent</button>
+        <button onclick="graph.setOptions({lineWidth: graph.options.showExtent > 1 ? graph.options.showExtent - 1 : graph.options.showExtent + 1})">Toggle Line Width</button>
         <button onclick="alert(JSON.stringify(graph.getLegendData(), null, 2));">Show Legend Data</button>
     </body>
 </html>
