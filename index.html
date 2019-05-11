@@ -92,7 +92,7 @@
         <button onclick="graph.setOptions({interpolate: !graph.options.interpolate});">Toggle Interpolation</button>
         <button onclick="graph.setOptions({offsetAnimate: !graph.options.offsetAnimate});">Toggle Offset Animation</button>
         <button onclick="graph.setOptions({showExtent: !graph.options.showExtent});">Toggle Extent</button>
-        <button onclick="graph.setOptions({lineWidth: graph.options.showExtent > 1 ? graph.options.showExtent - 1 : graph.options.showExtent + 1})">Toggle Line Width</button>
+        <button onclick="graph.setOptions({lineWidth: graph.options.lineWidth > 1 ? graph.options.lineWidth - 1 : graph.options.lineWidth + 1})">Toggle Line Width</button>
         <button onclick="alert(JSON.stringify(graph.getLegendData(), null, 2));">Show Legend Data</button>
     </body>
 </html>
