@@ -42,12 +42,14 @@ class svgAnimatedGraphs {
     /**
      * Extents object
      * @typedef {Object} Extents
-     * @property {Object} x - extents for the x axis
-     * @property {Number} x.min - minimum value on the x axis
-     * @property {Number} x.max - maximum value on the x axis
-     * @property {Object} y - extents for the x axis
-     * @property {Number} y.min - minimum value on the y axis
-     * @property {Number} y.max - maximum value on the y axis
+     * @property {Extent} x - extents for the x axis
+     * @property {Extent} y - extents for the x axis
+     */
+
+    /** Extent Object
+     * @typedef {Object} Extent
+     * @property {Number} min - minimum value on axis
+     * @property {Number} max - maximum value on axis
      */
 
     /**
@@ -381,7 +383,7 @@ class svgAnimatedGraphs {
     /**
      * update the options to change the rendering style etc
      * @param {Options} options - partial options block to update options
-     * @param {number} [duration=1000} - duration (in milliseconds) for animation if rerender is required
+     * @param {number} [duration=1000] - duration (in milliseconds) for animation if rerender is required
      */
     setOptions(options, duration = 1000) {
         Object.assign(this.options, options);
@@ -405,7 +407,7 @@ class svgAnimatedGraphs {
     /**
      * update the dataset (pass full dataset)
      * @param {array} data - new graph data
-     * @param {number} [duration=1000} - duration (in milliseconds) for animation to the new data
+     * @param {number} [duration=1000] - duration (in milliseconds) for animation to the new data
      */
     setData(data, duration = 1000) {
         this._validateData(data);
