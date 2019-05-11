@@ -11,6 +11,9 @@
 <dt><a href="#Extents">Extents</a> : <code>Object</code></dt>
 <dd><p>Extents object</p>
 </dd>
+<dt><a href="#Extent">Extent</a> : <code>Object</code></dt>
+<dd><p>Extent Object</p>
+</dd>
 <dt><a href="#Options">Options</a> : <code>Object</code></dt>
 <dd><p>Options object</p>
 </dd>
@@ -23,8 +26,8 @@
 
 * [svgAnimatedGraphs](#svgAnimatedGraphs)
     * [new svgAnimatedGraphs(options)](#new_svgAnimatedGraphs_new)
-    * [.setOptions(options, duration)](#svgAnimatedGraphs+setOptions)
-    * [.setData(data, duration)](#svgAnimatedGraphs+setData)
+    * [.setOptions(options, [duration])](#svgAnimatedGraphs+setOptions)
+    * [.setData(data, [duration])](#svgAnimatedGraphs+setData)
     * [.getLegendData()](#svgAnimatedGraphs+getLegendData) ⇒ <code>array</code>
 
 <a name="new_svgAnimatedGraphs_new"></a>
@@ -39,7 +42,7 @@ create a graph object
 
 <a name="svgAnimatedGraphs+setOptions"></a>
 
-### svgAnimatedGraphs.setOptions(options, duration)
+### svgAnimatedGraphs.setOptions(options, [duration])
 update the options to change the rendering style etc
 
 **Kind**: instance method of [<code>svgAnimatedGraphs</code>](#svgAnimatedGraphs)  
@@ -47,11 +50,11 @@ update the options to change the rendering style etc
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
 | options | [<code>Options</code>](#Options) |  | partial options block to update options |
-| duration | <code>number</code> | <code>1000}</code> | duration (in milliseconds) for animation if rerender is required |
+| [duration] | <code>number</code> | <code>1000</code> | duration (in milliseconds) for animation if rerender is required |
 
 <a name="svgAnimatedGraphs+setData"></a>
 
-### svgAnimatedGraphs.setData(data, duration)
+### svgAnimatedGraphs.setData(data, [duration])
 update the dataset (pass full dataset)
 
 **Kind**: instance method of [<code>svgAnimatedGraphs</code>](#svgAnimatedGraphs)  
@@ -59,7 +62,7 @@ update the dataset (pass full dataset)
 | Param | Type | Default | Description |
 | --- | --- | --- | --- |
 | data | <code>array</code> |  | new graph data |
-| duration | <code>number</code> | <code>1000}</code> | duration (in milliseconds) for animation to the new data |
+| [duration] | <code>number</code> | <code>1000</code> | duration (in milliseconds) for animation to the new data |
 
 <a name="svgAnimatedGraphs+getLegendData"></a>
 
@@ -78,12 +81,21 @@ Extents object
 
 | Name | Type | Description |
 | --- | --- | --- |
-| x | <code>Object</code> | extents for the x axis |
-| x.min | <code>Number</code> | minimum value on the x axis |
-| x.max | <code>Number</code> | maximum value on the x axis |
-| y | <code>Object</code> | extents for the x axis |
-| y.min | <code>Number</code> | minimum value on the y axis |
-| y.max | <code>Number</code> | maximum value on the y axis |
+| x | [<code>Extent</code>](#Extent) | extents for the x axis |
+| y | [<code>Extent</code>](#Extent) | extents for the x axis |
+
+<a name="Extent"></a>
+
+## Extent : <code>Object</code>
+Extent Object
+
+**Kind**: global typedef  
+**Properties**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| min | <code>Number</code> | minimum value on axis |
+| max | <code>Number</code> | maximum value on axis |
 
 <a name="Options"></a>
 
