@@ -610,7 +610,7 @@ class svgAnimatedGraphs {
 
     /**
      * get an array of keys from data to use as a legend
-     * @returns {{color: string, index: number, label: string}[]}
+     * @returns {array} array of legend items
      */
     getLegendData() {
         return this._getUnreservedFields(this.data).map((key, index) => {
