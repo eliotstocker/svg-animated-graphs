@@ -17,6 +17,15 @@
 <dt><a href="#Options">Options</a> : <code>Object</code></dt>
 <dd><p>Options object</p>
 </dd>
+<dt><a href="#Point">Point</a> : <code>Array.&lt;number&gt;</code></dt>
+<dd><p>Spatial Point</p>
+</dd>
+<dt><a href="#LinePath">LinePath</a> : <code>object</code></dt>
+<dd><p>Line Path Object</p>
+</dd>
+<dt><a href="#Segment">Segment</a></dt>
+<dd><p>Segment spec</p>
+</dd>
 </dl>
 
 <a name="svgAnimatedGraphs"></a>
@@ -123,4 +132,39 @@ Options object
 | [options.colors] | <code>array</code> |  | an array of vector 3 values for graph dataset rendering |
 | [options.rounding] | <code>number</code> | <code>0.25</code> | amount of rounding to apply if interpolation is enabled |
 | [options.extents] | [<code>Extents</code>](#Extents) |  | absolute values for graph extents (by default these will be calculated from the data sets |
+| [options.ignoreFields] | <code>Array.&lt;string&gt;</code> |  | fields to ignore in the data objects array |
+
+<a name="Point"></a>
+
+## Point : <code>Array.&lt;number&gt;</code>
+Spatial Point
+
+**Kind**: global typedef  
+<a name="LinePath"></a>
+
+## LinePath : <code>object</code>
+Line Path Object
+
+**Kind**: global typedef  
+**Properties**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| key | <code>string</code> | line legend key |
+| color | <code>Array.&lt;number&gt;</code> | color array (vector 3 r,g,b (0 - 256)) |
+| path | [<code>Array.&lt;Point&gt;</code>](#Point) | array of points to plot the line |
+
+<a name="Segment"></a>
+
+## Segment
+Segment spec
+
+**Kind**: global typedef  
+**Properties**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| key | <code>string</code> | Segment legend key |
+| color | <code>Array.&lt;number&gt;</code> | color array (vector 3 r,g,b (0 - 256)) |
+| value | <code>number</code> | total value assigned to the segment |
 

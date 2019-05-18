@@ -71,6 +71,7 @@ class svgAnimatedGraphs {
      * @property {array} [options.colors] - an array of vector 3 values for graph dataset rendering
      * @property {number} [options.rounding=0.25] - amount of rounding to apply if interpolation is enabled
      * @property {Extents} [options.extents] - absolute values for graph extents (by default these will be calculated from the data sets
+     * @property {string[]} [options.ignoreFields] - fields to ignore in the data objects array
      */
 
     /**
@@ -85,8 +86,8 @@ class svgAnimatedGraphs {
             throw new Error('you must provide a parent element | options.el');
         }
 
-        if(options.type && !allowedTypes.includes(options.type)) {
-            throw new Error(`type '${options.type}' no allowed.`);
+        if(!allowedTypes.includes(this.options)) {
+            throw new Error(`type '${this.options}' no allowed.`);
         }
 
         this.el = this.options.el;
@@ -129,7 +130,7 @@ class svgAnimatedGraphs {
         this._container.appendChild(this._canvas);
         this.el.appendChild(this._container);
 
-        this._listeners.canvasSizer && window.removeEventListener(this._listeners.canvasSizer);
+        this._listeners.canvasSizer && window.removeEventListener('resize', this._listeners.canvasSizer);
         window.addEventListener('resize', this._listeners.canvasSizer = () => {
             this._render(0, false);
         });
@@ -156,7 +157,7 @@ class svgAnimatedGraphs {
             this._width = height * ratio;
         }
         this._ratio = ratio / 100 * height;
-        this._canvas.setAttribute('viewBox', `0 ${renderHeight - height} ${this._width} ${height}`)
+        this._canvas.setAttribute('viewBox', `0 ${renderHeight - height} ${this._width} ${height}`);
     }
 
     /**
@@ -166,7 +167,9 @@ class svgAnimatedGraphs {
      */
     _getReserved() {
         const reserved = [this.options.xAxisField];
-
+        if(this.options.ignoreFields) {
+            return reserved.concat(this.options.ignoreFields);
+        }
         return reserved;
     }
 
@@ -220,15 +223,15 @@ class svgAnimatedGraphs {
     /**
      * get the style attributes for a series
      * @param {array} color - rgb vector 3 color array
-     * @param {string} key - series key
+     * @param {string|null} key - series key
      * @private
      */
-    _getStyle(color, key) {
+    _getStyle(color, key = null) {
         let style = {};
 
         if(fillTypes.includes(this.options.type)) {
             style.fill = `rgba(${color[0]},${color[1]},${color[2]}, ${this.options.opacity})`;
-            style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, 0)`
+            style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, 0)`;
         } else {
             style.fill = `rgba(${color[0]},${color[1]},${color[2]}, 0)`;
             style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, ${this.options.opacity})`;
@@ -336,7 +339,7 @@ class svgAnimatedGraphs {
             return {
                 x: [0, 1],
                 y: [0, 1]
-            }
+            };
         }
 
         const fields = this._getUnreservedFields(data);
@@ -377,7 +380,7 @@ class svgAnimatedGraphs {
         return {
             x,
             y
-        }
+        };
     }
 
     /**
@@ -386,11 +389,11 @@ class svgAnimatedGraphs {
      * @param {number} [duration=1000] - duration (in milliseconds) for animation if rerender is required
      */
     setOptions(options, duration = 1000) {
-        Object.assign(this.options, options);
-
         if(options.type && !allowedTypes.includes(options.type)) {
             throw new Error(`type '${options.type}' no allowed.`);
         }
+
+        Object.assign(this.options, options);
 
         const redraw = Object.keys(options).reduce((render, key) => optionsRedraw.includes(key) || render, false);
         const rerender = Object.keys(options).reduce((render, key) => optionsRerender.includes(key) || render, false);
@@ -487,10 +490,24 @@ class svgAnimatedGraphs {
     }
 
     /**
+     * Spatial Point
+     * @typedef {number[]} Point
+     */
+
+    /**
+     * Line Path Object
+     * @typedef {object} LinePath
+     * @property {string} key - line legend key
+     * @property {number[]} color - color array (vector 3 r,g,b (0 - 256))
+     * @property {Point[]} path - array of points to plot the line
+     */
+
+    /**
      * create a vector 2 point output for a single line dataset
      * @param {string} xKey - the value to use for the x axis
      * @param {string} yKey - the value to use for the y axis for this line
      * @private
+     * @returns {LinePath}
      */
     _createLine(xKey, yKey) {
         const index = this._getUnreservedFields(this.data).indexOf(yKey);
@@ -508,14 +525,22 @@ class svgAnimatedGraphs {
                     ((y - this.extents.y[0]) / (this.extents.y[1] - this.extents.y[0])) * 100,
                 ]]);
             }, [])
-        }
+        };
     }
 
     /**
-     * create a spec for a pie/donug segment
+     * Segment spec
+     * @typedef Segment
+     * @property {string} key - Segment legend key
+     * @property {number[]} color - color array (vector 3 r,g,b (0 - 256))
+     * @property {number} value - total value assigned to the segment
+     */
+
+    /**
+     * create a spec for a pie/donut segment
      * @param {string} xKey - the value to use for the x axis
      * @param {string} yKey - the value to use for the y axis for this segment
-     * @returns {{color: (number[]|*), value: *, key: *}}
+     * @returns {Segment}
      * @private
      */
     _createSegment(xKey, yKey) {
@@ -531,23 +556,23 @@ class svgAnimatedGraphs {
                 }
                 return val + y;
             }, 0)
-        }
+        };
     }
 
     /**
      * return the point as an SVG operation
      * @param {string} prefix - operation marker
-     * @param {string} point - vector 2 point map
+     * @param {Point} point - vector 2 point map
      * @returns {string} operation
      * @private
      */
     _getPoint(prefix, point) {
-        return `${prefix} ${point[0] * this._ratio},${renderHeight - point[1]}`
+        return `${prefix} ${point[0] * this._ratio},${renderHeight - point[1]}`;
     }
 
     /**
      * create a shape output for a single series
-     * @param {array} data - new graph data
+     * @param {LinePath} data - Line path data
      * @private
      */
     _drawLinePath(data) {
@@ -580,7 +605,7 @@ class svgAnimatedGraphs {
 
     /**
      * create a shape output for a pie/donut segment
-     * @param {array} data - new graph data
+     * @param {Segment} data - new graph data
      * @param {number} total - total of all values for pie
      * @param {number} rotation - start rotation for segment
      * @private
@@ -632,7 +657,7 @@ class svgAnimatedGraphs {
                 index,
                 label: key,
                 color: `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${this.options.opacity})`
-            }
+            };
         });
     }
 
@@ -643,11 +668,11 @@ class svgAnimatedGraphs {
     _renderText() {
         const text = document.createElement('span');
         text.style.position = 'absolute';
-        text.style.top = (this._container.offsetHeight / 110) * 1.5;
-        text.style.left = (this._container.offsetHeight / 110) * 1.5;
-        text.style.fontSize = (this._container.offsetHeight / 110) * 6;
+        text.style.top = `${(this._container.offsetHeight / 110) * 1.5}px`;
+        text.style.left = `${(this._container.offsetHeight / 110) * 1.5}px`;
+        text.style.fontSize = `${(this._container.offsetHeight / 110) * 6}px`;
         text.style.textTransform = 'uppercase';
-        text.style.opacity = this.options.opacity;
+        text.style.opacity = this.options.opacity.toString(10);
 
         text.textContent = this.extents.y[1];
         if(this.options.units) {
