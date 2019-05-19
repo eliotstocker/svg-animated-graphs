@@ -491,17 +491,36 @@ class svgAnimatedGraphs {
             combinedShapes = this._paths.map((item, index) => shape(oldPaths[index] || oldPaths[0], item));
         }
 
+        this._animate(fields, combinedShapes, duration);
+    }
+
+    _animate(fields, combinedShapes, duration) {
         if (this.options.offsetAnimate) {
             const chunks = combinedShapes.chunk(fields.length);
-            chunks.forEach((chunk, index) => {
-                setTimeout(() => {
-                    const animation = timeline(...chunk, {
-                        duration
-                    });
-                    render(this._canvas, animation);
-                    play(animation);
-                }, index * 100);
+            const tl = [].concat(...chunks.map((chunk, cIndex) => {
+                return chunk.map((item, iIndex) => {
+                    const queue = {};
+                    if(iIndex > 0) {
+                        queue.after = `${cIndex}-${iIndex - 1}`;
+                    } else if(cIndex > 0 || iIndex > 0) {
+                        queue.offset = cIndex * 100;
+                        queue.at = '0-0';
+                    }
+                    return [
+                        item,
+                        {
+                            name: `${cIndex}-${iIndex}`,
+                            queue
+                        }
+                    ];
+                });
+            }));
+
+            const animation = timeline(...tl, {
+                duration
             });
+            render(this._canvas, animation);
+            play(animation);
         } else {
             const animation = timeline(...combinedShapes.map((path, index) => {
                 const queue = {};
@@ -510,7 +529,7 @@ class svgAnimatedGraphs {
                 }
                 return [path, {
                     name: index,
-                    queue: queue
+                    queue
                 }];
             }), {
                 duration
@@ -704,11 +723,9 @@ class svgAnimatedGraphs {
         const Y = Math.sqrt(z * z - x * x);
         const X = a <= 180 ? l + x : l - x;
 
-        let pathString;
+        let pathString = `M ${l},0 A ${l},${l} 1 0,1 ${X},${Y}`;
         if(fillTypes.includes(this.options.type)) {
-            pathString = `M ${l},${l} L ${l},0 A ${l},${l} 1 0,1 ${X},${Y} z`;
-        } else {
-            pathString = `M ${l},0 A ${l},${l} 1 0,1 ${X},${Y}`;
+            pathString = `M ${l},${l} ${pathString.replace('M', 'L')} z`;
         }
 
         const transformed = svgParth(pathString)
@@ -717,11 +734,15 @@ class svgAnimatedGraphs {
             .round(4)
             .toString();
 
-        return Object.assign({}, this._getStyle(data.color, data.key), {
-            type: 'path',
-            d: transformed,
-            class: `plot-${data.key}-values`,
-        });
+        return Object.assign(
+            {},
+            this._getStyle(data.color, data.key),
+            {
+                type: 'path',
+                d: transformed,
+                class: `plot-${data.key}-values`,
+            }
+        );
     }
 
     /**

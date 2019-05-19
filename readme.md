@@ -20,6 +20,7 @@ A simple library for (not super accurate, but beautiful) graphin in Javascript a
 - [x] Legend Data Export
 - [ ] Legend Rendering
 - [ ] Axis Labels
+- [ ] Animation queueing
  
 ## Input Data Spec:
 
