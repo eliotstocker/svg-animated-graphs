@@ -102,6 +102,8 @@ class svgAnimatedGraphs {
 
         this._paths = [];
         this._preRenderData = [];
+        this._animation = null;
+        this._animateTimeout = 0;
 
         this._createCanvas();
         this.extents = this._getExtents(this.data);
@@ -444,6 +446,12 @@ class svgAnimatedGraphs {
      * @private
      */
     _render(duration = 1000, animate = true) {
+        if(this._animation && !this._animation.state.finished) {
+            clearTimeout(this._animateTimeout);
+            this._animateTimeout = setTimeout(this._render.bind(this, duration, animate), 50);
+            return;
+        }
+
         const oldPaths = this._paths;
         const fields = this._getUnreservedFields(this.data);
 
@@ -516,13 +524,13 @@ class svgAnimatedGraphs {
                 });
             }));
 
-            const animation = timeline(...tl, {
+            this._animation = timeline(...tl, {
                 duration
             });
-            render(this._canvas, animation);
-            play(animation);
+            render(this._canvas, this._animation);
+            play(this._animation);
         } else {
-            const animation = timeline(...combinedShapes.map((path, index) => {
+            this._animation = timeline(...combinedShapes.map((path, index) => {
                 const queue = {};
                 if (index) {
                     queue.at = 0;
@@ -534,8 +542,8 @@ class svgAnimatedGraphs {
             }), {
                 duration
             });
-            render(this._canvas, animation);
-            play(animation);
+            render(this._canvas, this._animation);
+            play(this._animation);
         }
     }
 
