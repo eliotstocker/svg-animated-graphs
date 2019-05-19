@@ -3,7 +3,7 @@
 A simple library for (not super accurate, but beautiful) graphin in Javascript and SVG
 
 ## Feature List:
-- [x] General Rendering (using Widerness JS)
+- [x] General Rendering
 - [x] Area Charts
 - [x] Line Charts
 - [x] Pie Charts
