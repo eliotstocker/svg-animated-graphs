@@ -502,6 +502,13 @@ class svgAnimatedGraphs {
         this._animate(fields, combinedShapes, duration);
     }
 
+    /**
+     * build animation timeline and run it
+     * @param {string[]} fields - list of fields being rendered in the graph
+     * @param {Shape[]} combinedShapes - add shapes to be rendered (with start and end animation frames)
+     * @param {number} duration - duration to render for
+     * @private
+     */
     _animate(fields, combinedShapes, duration) {
         if (this.options.offsetAnimate) {
             const chunks = combinedShapes.chunk(fields.length);
@@ -792,6 +799,16 @@ class svgAnimatedGraphs {
         });
     }
 
+    /**
+     * calculate horizonatl or vertical position for a bar based on the chart direction
+     * @param {string} direction - horizontal or vertical
+     * @param {number} value - percentage value for the bar
+     * @param {number} barStart - percentage of where the bar should start along the X Axis
+     * @param {number} barWidth - the width to render the bar
+     * @param {number} stackHeight - percentage height to start the bar render from (for stack bars)
+     * @returns {object} defines x, y, width and height
+     * @private
+     */
     _barRotation(direction, value, barStart, barWidth, stackHeight) {
         if(direction === 'horizontal') {
             return {
@@ -810,6 +827,12 @@ class svgAnimatedGraphs {
         }
     }
 
+    /**
+     * draw bars minimised so that they can be scaled up from 0
+     * @param {object} shape - bar spec
+     * @returns {object} new minimised bar spec
+     * @private
+     */
     _drawMinimisedShape(shape) {
         if (!barTypes.includes(this.options.type)) {
             return shape;

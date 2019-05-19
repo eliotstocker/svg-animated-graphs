@@ -56,6 +56,7 @@
     * [.setOptions(options, [duration])](#svgAnimatedGraphs+setOptions)
     * [.setData(data, [duration])](#svgAnimatedGraphs+setData)
     * [._render(duration, animate)](#svgAnimatedGraphs+_render) ℗
+    * [._animate(fields, combinedShapes, duration)](#svgAnimatedGraphs+_animate) ℗
     * [._createLine(xKey, yKey)](#svgAnimatedGraphs+_createLine) ⇒ [<code>LinePath</code>](#LinePath) ℗
     * [._createSegment(xKey, yKey)](#svgAnimatedGraphs+_createSegment) ⇒ [<code>Segment</code>](#Segment) ℗
     * [._createBarGroup(xKey, data)](#svgAnimatedGraphs+_createBarGroup) ⇒ [<code>BarGroup</code>](#BarGroup) ℗
@@ -63,6 +64,8 @@
     * [._drawLinePath(data)](#svgAnimatedGraphs+_drawLinePath) ⇒ <code>Shape</code> ℗
     * [._drawRoundPath(data, total, rotation)](#svgAnimatedGraphs+_drawRoundPath) ⇒ <code>Object</code> ℗
     * [._drawBarGroup(group, groupCount, groupIndex, max)](#svgAnimatedGraphs+_drawBarGroup) ⇒ <code>Array.&lt;object&gt;</code> ℗
+    * [._barRotation(direction, value, barStart, barWidth, stackHeight)](#svgAnimatedGraphs+_barRotation) ⇒ <code>object</code> ℗
+    * [._drawMinimisedShape(shape)](#svgAnimatedGraphs+_drawMinimisedShape) ⇒ <code>object</code> ℗
     * [.getLegendData()](#svgAnimatedGraphs+getLegendData) ⇒ <code>array</code>
     * [._renderText()](#svgAnimatedGraphs+_renderText) ℗
 
@@ -241,6 +244,20 @@ render the data to the canvas
 | duration | <code>number</code> | <code>1000</code> | duration of animation |
 | animate | <code>boolean</code> | <code>true</code> | weather or not to animate the transition |
 
+<a name="svgAnimatedGraphs+_animate"></a>
+
+### svgAnimatedGraphs.\_animate(fields, combinedShapes, duration) ℗
+build animation timeline and run it
+
+**Kind**: instance method of [<code>svgAnimatedGraphs</code>](#svgAnimatedGraphs)  
+**Access**: private  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| fields | <code>Array.&lt;string&gt;</code> | list of fields being rendered in the graph |
+| combinedShapes | <code>Array.&lt;Shape&gt;</code> | add shapes to be rendered (with start and end animation frames) |
+| duration | <code>number</code> | duration to render for |
+
 <a name="svgAnimatedGraphs+_createLine"></a>
 
 ### svgAnimatedGraphs.\_createLine(xKey, yKey) ⇒ [<code>LinePath</code>](#LinePath) ℗
@@ -336,6 +353,36 @@ draw a single data point group as bars
 | groupCount |  |  |
 | groupIndex |  |  |
 | max |  |  |
+
+<a name="svgAnimatedGraphs+_barRotation"></a>
+
+### svgAnimatedGraphs.\_barRotation(direction, value, barStart, barWidth, stackHeight) ⇒ <code>object</code> ℗
+calculate horizonatl or vertical position for a bar based on the chart direction
+
+**Kind**: instance method of [<code>svgAnimatedGraphs</code>](#svgAnimatedGraphs)  
+**Returns**: <code>object</code> - defines x, y, width and height  
+**Access**: private  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| direction | <code>string</code> | horizontal or vertical |
+| value | <code>number</code> | percentage value for the bar |
+| barStart | <code>number</code> | percentage of where the bar should start along the X Axis |
+| barWidth | <code>number</code> | the width to render the bar |
+| stackHeight | <code>number</code> | percentage height to start the bar render from (for stack bars) |
+
+<a name="svgAnimatedGraphs+_drawMinimisedShape"></a>
+
+### svgAnimatedGraphs.\_drawMinimisedShape(shape) ⇒ <code>object</code> ℗
+draw bars minimised so that they can be scaled up from 0
+
+**Kind**: instance method of [<code>svgAnimatedGraphs</code>](#svgAnimatedGraphs)  
+**Returns**: <code>object</code> - new minimised bar spec  
+**Access**: private  
+
+| Param | Type | Description |
+| --- | --- | --- |
+| shape | <code>object</code> | bar spec |
 
 <a name="svgAnimatedGraphs+getLegendData"></a>
 

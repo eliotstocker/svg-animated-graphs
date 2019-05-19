@@ -1,6 +1,6 @@
 # SVG Animated Graphs
 
-A simple library for (not super accurate, but beautiful) graphin in Javascript and SVG
+A simple library for (not super accurate, but beautiful) graphing in Javascript and SVG
 
 ## Feature List:
 - [x] General Rendering
