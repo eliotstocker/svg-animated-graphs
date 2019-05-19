@@ -8,8 +8,8 @@ A simple library for (not super accurate, but beautiful) graphin in Javascript a
 - [x] Line Charts
 - [x] Pie Charts
 - [x] Donut Charts
-- [ ] Bar Charts
-- [ ] Column Charts
+- [x] Bar Charts
+- [x] Column Charts
 - [x] Animate on settings change
 - [x] Animate on data updated
 - [x] Animate on series added

@@ -1,6 +1,6 @@
 'use strict';
 
-const { shape, plainShapeObject, render, play, timeline } = require('wilderness');
+const { shape, render, play, timeline } = require('wilderness');
 const rounding = require('./rounding');
 const svgParth = require('svgpath');
 
@@ -14,6 +14,7 @@ const defaultOptions = {
     rounding: 0.25,
     width: '100%',
     height: '100%',
+    groupGap: 5,
     colors: [
         [255, 0, 0],
         [255, 255, 0],
@@ -24,11 +25,11 @@ const defaultOptions = {
 };
 
 const optionsRerender = ['showExtent'];
-const optionsRedraw = ['type', 'colors', 'opacity', 'interpolate', 'lineWidth', 'extents'];
-const fillTypes = ['area', 'pie'];
+const optionsRedraw = ['type', 'colors', 'opacity', 'interpolate', 'lineWidth', 'extents', 'groupMode'];
 const lineTypes = ['line', 'area'];
 const roundTypes = ['donut', 'pie'];
-const barTypes = ['bar, column'];
+const barTypes = ['bar', 'column'];
+const fillTypes = ['area', 'pie'].concat(barTypes);
 const extentTypes = [].concat(lineTypes, barTypes);
 const allowedTypes = [].concat(lineTypes, roundTypes, barTypes);
 const lineWeightMultiplier = {donut: 10};
@@ -72,6 +73,7 @@ class svgAnimatedGraphs {
      * @property {number} [options.rounding=0.25] - amount of rounding to apply if interpolation is enabled
      * @property {Extents} [options.extents] - absolute values for graph extents (by default these will be calculated from the data sets
      * @property {string[]} [options.ignoreFields] - fields to ignore in the data objects array
+     * @property {string} [options.groupMode] - how to group bars etc
      */
 
     /**
@@ -86,8 +88,8 @@ class svgAnimatedGraphs {
             throw new Error('you must provide a parent element | options.el');
         }
 
-        if(!allowedTypes.includes(this.options)) {
-            throw new Error(`type '${this.options}' no allowed.`);
+        if(!allowedTypes.includes(this.options.type)) {
+            throw new Error(`type '${this.options.type}' not allowed.`);
         }
 
         this.el = this.options.el;
@@ -197,7 +199,7 @@ class svgAnimatedGraphs {
             const placeholder = this._createEmpty(this.options.colors[0]);
             this._paths = [placeholder];
 
-            render(this._canvas, placeholder);
+            render(this._canvas, shape(placeholder));
         }
     }
 
@@ -282,7 +284,7 @@ class svgAnimatedGraphs {
             spec.class = className;
         }
 
-        return shape(Object.assign({}, this._getStyle(color), spec));
+        return Object.assign({}, this._getStyle(color), spec);
     }
 
     /**
@@ -390,7 +392,7 @@ class svgAnimatedGraphs {
      */
     setOptions(options, duration = 1000) {
         if(options.type && !allowedTypes.includes(options.type)) {
-            throw new Error(`type '${options.type}' no allowed.`);
+            throw new Error(`type '${options.type}' not allowed.`);
         }
 
         Object.assign(this.options, options);
@@ -428,7 +430,7 @@ class svgAnimatedGraphs {
             this._preRenderData = fields.map(field => this._createSegment(xKey, field));
         } 
         else if (barTypes.includes(this.options.type)) {
-            throw new Error('not yet implemented');
+            this._preRenderData = this.data.map(obj => this._createBarGroup(xKey, obj));
         }
 
         this._render(duration);
@@ -442,6 +444,7 @@ class svgAnimatedGraphs {
      */
     _render(duration = 1000, animate = true) {
         const oldPaths = this._paths;
+        const fields = this._getUnreservedFields(this.data);
 
         this._clearCanvas();
 
@@ -452,9 +455,11 @@ class svgAnimatedGraphs {
             this._setViewableHeight(100);
         }
 
-        if(lineTypes.includes(this.options.type)) {
+        if (lineTypes.includes(this.options.type)) {
+            // render line or area
             this._paths = this._preRenderData.map(this._drawLinePath.bind(this));
         } else if (roundTypes.includes(this.options.type)) {
+            // render pie or donut
             const total = this._preRenderData.reduce((acc, seg) => acc + seg.value, 0);
             let rotationAcc = 0;
             this._paths = this._preRenderData.map(segment => {
@@ -462,30 +467,55 @@ class svgAnimatedGraphs {
                 rotationAcc += segment.value;
                 return path;
             });
+        } else if(barTypes.includes(this.options.type)) {
+            //render bar or column
+            const total = this._preRenderData.reduce((acc, group) => Math.max(acc, group.max), 0);
+            this._paths = [].concat(...this._preRenderData
+                .map((data, index) => this._drawBarGroup(data, this._preRenderData.length, index, total)));
         } else {
             throw new Error('not yet implemented');
         }
 
         if(!oldPaths || oldPaths.length < 1 || !animate || duration < 1) {
-            return render(this._canvas, ...this._paths);
+            return render(this._canvas, ...this._paths.map(path => shape(path)));
         }
 
-        const combinedPaths = this._paths.map((item, index) => shape(plainShapeObject(oldPaths[index] || oldPaths[0]), plainShapeObject(this._paths[index])));
+        let combinedShapes;
+        if(this._paths.length > fields.length && this._paths.length !== oldPaths.length) {
+            const remaining = this._paths.slice(oldPaths.length, this._paths.length);
+            combinedShapes = oldPaths
+                .map((value, index) => shape(value, this._paths[index]))
+                .concat(remaining.map(def => shape(this._drawMinimisedShape(def), def)));
+        } else {
+            combinedShapes = this._paths.map((item, index) => shape(oldPaths[index] || oldPaths[0], item));
+        }
 
         if (this.options.offsetAnimate) {
-            const animation = timeline(...combinedPaths, {
+            const chunks = combinedShapes.chunk(fields.length);
+            chunks.forEach((chunk, index) => {
+                setTimeout(() => {
+                    const animation = timeline(...chunk, {
+                        duration
+                    });
+                    render(this._canvas, animation);
+                    play(animation);
+                }, index * 100);
+            });
+        } else {
+            const animation = timeline(...combinedShapes.map((path, index) => {
+                const queue = {};
+                if (index) {
+                    queue.at = 0;
+                }
+                return [path, {
+                    name: index,
+                    queue: queue
+                }];
+            }), {
                 duration
             });
             render(this._canvas, animation);
             play(animation);
-        } else {
-            combinedPaths.forEach(path => {
-                const animation = timeline(path, {
-                    duration
-                });
-                render(this._canvas, animation);
-                play(animation);
-            });
         }
     }
 
@@ -559,6 +589,27 @@ class svgAnimatedGraphs {
         };
     }
 
+    _createBarGroup(xKey, data) {
+        const stacked = this.options.groupMode === 'stacked';
+        const fields = this._getUnreservedFields(this.data);
+        return {
+            group: xKey,
+            type: stacked ? 'stacked' : 'group',
+            max: fields.reduce((acc, field) => {
+                const val = data[field];
+                if (stacked) {
+                    return acc + val;
+                }
+                return Math.max(acc, val);
+            }, 0),
+            quadrants: fields.map(field => ({
+                key: field,
+                value: data[field],
+                color: this.options.colors[fields.indexOf(field)]
+            }))
+        };
+    }
+
     /**
      * return the point as an SVG operation
      * @param {string} prefix - operation marker
@@ -574,6 +625,7 @@ class svgAnimatedGraphs {
      * create a shape output for a single series
      * @param {LinePath} data - Line path data
      * @private
+     * @returns {Shape}
      */
     _drawLinePath(data) {
         let pathString = data.path.reduce((string, point) => {
@@ -596,11 +648,11 @@ class svgAnimatedGraphs {
         }
 
 
-       return shape(Object.assign({}, this._getStyle(data.color, data.key), {
+       return Object.assign({}, this._getStyle(data.color, data.key), {
             type: 'path',
             d: pathString,
             class: `plot-${data.key}-values`,
-        }));
+        });
     }
 
     /**
@@ -609,6 +661,7 @@ class svgAnimatedGraphs {
      * @param {number} total - total of all values for pie
      * @param {number} rotation - start rotation for segment
      * @private
+     * @returns {Shape}
      */
     _drawRoundPath(data, total, rotation) {
         const l = 50 - ((this.options.lineWidth * (lineWeightMultiplier[this.options.type] || 1)) / 2);
@@ -639,11 +692,71 @@ class svgAnimatedGraphs {
             .round(4)
             .toString();
 
-        return shape(Object.assign({}, this._getStyle(data.color, data.key), {
+        return Object.assign({}, this._getStyle(data.color, data.key), {
             type: 'path',
             d: transformed,
             class: `plot-${data.key}-values`,
-        }));
+        });
+    }
+
+    _drawBarGroup(group, groupCount, groupIndex, max) {
+        const gap = this.options.groupGap / 10;
+        const groupWidth = (100 / groupCount) - gap;
+        const groupStart = (groupWidth + gap) * groupIndex;
+
+        const barWidth = group.type === 'stacked' ? groupWidth :
+            groupWidth / Object.keys(group.quadrants).length;
+
+        let stackHeight = 0;
+        const direction = this.options.type === 'bar' ? 'vertical' : 'horizontal';
+
+        return group.quadrants.map(({key, value, color}, index) => {
+            const barStart = (group.type === 'stacked' ? 0 : barWidth * index) + groupStart;
+            const height = (value / max) * 100;
+            const barPart = Object.assign(
+                {},
+                this._getStyle(color, key),
+                {
+                    type: 'rect',
+                    class: `plot-${key}-values`
+                },
+                this._barRotation(direction, height, barStart, barWidth, stackHeight)
+            );
+
+            stackHeight += group.type === 'stacked' ? height : 0;
+
+            return barPart;
+        });
+    }
+
+    _barRotation(direction, value, barStart, barWidth, stackHeight) {
+        if(direction === 'horizontal') {
+            return {
+                x: stackHeight * this._ratio,
+                y: barStart + 10,
+                width: value * this._ratio,
+                height: barWidth
+            };
+        } else {
+            return {
+                x: barStart * this._ratio,
+                y: 110 - stackHeight,
+                width: barWidth * this._ratio,
+                height: - value
+            };
+        }
+    }
+
+    _drawMinimisedShape(shape) {
+        if (!barTypes.includes(this.options.type)) {
+            return shape;
+        }
+
+        if(this.options.type === 'bar') {
+            return Object.assign({}, shape, {y: 110, height: 0});
+        } else {
+            return Object.assign({}, shape, {x: 0, width: 0});
+        }
     }
 
     /**
@@ -693,5 +806,14 @@ class svgAnimatedGraphs {
         render(this._canvas, line);
     }
 }
+
+Object.defineProperty(Array.prototype, 'chunk', {
+    value: function(chunkSize) {
+        const R = [];
+        for (let i = 0; i < this.length; i += chunkSize)
+            R.push(this.slice(i, i + chunkSize));
+        return R;
+    }
+});
 
 module.exports = svgAnimatedGraphs;
