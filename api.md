@@ -26,6 +26,12 @@
 <dt><a href="#Segment">Segment</a></dt>
 <dd><p>Segment spec</p>
 </dd>
+<dt><a href="#Bar">Bar</a></dt>
+<dd><p>Bar Spec</p>
+</dd>
+<dt><a href="#BarGroup">BarGroup</a></dt>
+<dd><p>Bar Group Spec</p>
+</dd>
 </dl>
 
 <a name="svgAnimatedGraphs"></a>
@@ -133,6 +139,7 @@ Options object
 | [options.rounding] | <code>number</code> | <code>0.25</code> | amount of rounding to apply if interpolation is enabled |
 | [options.extents] | [<code>Extents</code>](#Extents) |  | absolute values for graph extents (by default these will be calculated from the data sets |
 | [options.ignoreFields] | <code>Array.&lt;string&gt;</code> |  | fields to ignore in the data objects array |
+| [options.groupMode] | <code>string</code> | <code>&quot;stacked&quot;</code> | how to group bars etc |
 
 <a name="Point"></a>
 
@@ -167,4 +174,33 @@ Segment spec
 | key | <code>string</code> | Segment legend key |
 | color | <code>Array.&lt;number&gt;</code> | color array (vector 3 r,g,b (0 - 256)) |
 | value | <code>number</code> | total value assigned to the segment |
+
+<a name="Bar"></a>
+
+## Bar
+Bar Spec
+
+**Kind**: global typedef  
+**Properties**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| key | <code>string</code> | field key |
+| value | <code>number</code> | bar representation value |
+| color | <code>array</code> | rgb vector 3 color array |
+
+<a name="BarGroup"></a>
+
+## BarGroup
+Bar Group Spec
+
+**Kind**: global typedef  
+**Properties**
+
+| Name | Type | Description |
+| --- | --- | --- |
+| group | <code>string</code> \| <code>number</code> | xAxis label for the group |
+| group | <code>string</code> | type (stacked or grouped) |
+| max | <code>number</code> | group maximum extent (max value when not stacked, combined values when stacked) |
+| quadrants | [<code>Bar</code>](#Bar) | spec for the bars in the group |
 

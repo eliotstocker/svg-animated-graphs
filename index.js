@@ -14,6 +14,7 @@ const defaultOptions = {
     rounding: 0.25,
     width: '100%',
     height: '100%',
+    groupMode: 'stacked',
     groupGap: 5,
     colors: [
         [255, 0, 0],
@@ -73,7 +74,7 @@ class svgAnimatedGraphs {
      * @property {number} [options.rounding=0.25] - amount of rounding to apply if interpolation is enabled
      * @property {Extents} [options.extents] - absolute values for graph extents (by default these will be calculated from the data sets
      * @property {string[]} [options.ignoreFields] - fields to ignore in the data objects array
-     * @property {string} [options.groupMode] - how to group bars etc
+     * @property {string} [options.groupMode=stacked] - how to group bars etc
      */
 
     /**
@@ -589,6 +590,30 @@ class svgAnimatedGraphs {
         };
     }
 
+    /**
+     * Bar Spec
+     * @typedef Bar
+     * @property {string} key - field key
+     * @property {number} value - bar representation value
+     * @property {array} color - rgb vector 3 color array
+     */
+
+    /**
+     * Bar Group Spec
+     * @typedef BarGroup
+     * @property {string|number} group - xAxis label for the group
+     * @property {string} group - type (stacked or grouped)
+     * @property {number} max - group maximum extent (max value when not stacked, combined values when stacked)
+     * @property {Bar} quadrants - spec for the bars in the group
+     */
+
+    /**
+     * create a spec for a bar group
+     * @param {string} xKey - the value to use for the x axis
+     * @param {object} data - single data entry point object (key value)
+     * @returns {BarGroup}
+     * @private
+     */
     _createBarGroup(xKey, data) {
         const stacked = this.options.groupMode === 'stacked';
         const fields = this._getUnreservedFields(this.data);
@@ -661,7 +686,7 @@ class svgAnimatedGraphs {
      * @param {number} total - total of all values for pie
      * @param {number} rotation - start rotation for segment
      * @private
-     * @returns {Shape}
+     * @returns {Object} Shape Definition
      */
     _drawRoundPath(data, total, rotation) {
         const l = 50 - ((this.options.lineWidth * (lineWeightMultiplier[this.options.type] || 1)) / 2);
@@ -699,6 +724,15 @@ class svgAnimatedGraphs {
         });
     }
 
+    /**
+     * draw a single data point group as bars
+     * @param {object} group - group defination object
+     * @param groupCount
+     * @param groupIndex
+     * @param max
+     * @returns {object[]} Shape Definition
+     * @private
+     */
     _drawBarGroup(group, groupCount, groupIndex, max) {
         const gap = this.options.groupGap / 10;
         const groupWidth = (100 / groupCount) - gap;
