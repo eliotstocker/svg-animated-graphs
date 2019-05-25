@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "deepmerge": "^3.2.0",
     "svgpath": "^2.2.2",
     "wilderness": "^5.1.2"
   },

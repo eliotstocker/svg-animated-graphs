@@ -2,7 +2,8 @@
 
 const { shape, render, play, timeline } = require('wilderness');
 const rounding = require('./rounding');
-const svgParth = require('svgpath');
+const svgPath = require('svgpath');
+const merge = require('deepmerge');
 
 const defaultOptions = {
     animateIn: true,
@@ -16,6 +17,27 @@ const defaultOptions = {
     height: '100%',
     groupMode: 'stacked',
     groupGap: 5,
+    grid: {
+        enabled: false,
+        x: {
+            enabled: true,
+            every: 'auto',
+            start: 0,
+            ends: {
+                left: true,
+                right: true
+            }
+        },
+        y: {
+            enabled: true,
+            every: 'auto',
+            start: 0,
+            ends: {
+                top: true,
+                bottom: true
+            }
+        }
+    },
     colors: [
         [255, 0, 0],
         [255, 255, 0],
@@ -82,8 +104,10 @@ class svgAnimatedGraphs {
      * @param options {Options}
      */
     constructor(options) {
-        this.options = Object.assign({}, defaultOptions, options);
+        this.options = merge.all([defaultOptions, options], {clone: false});
         this._listeners = {};
+
+        console.log(this.options);
 
         if(!this.options.el) {
             throw new Error('you must provide a parent element | options.el');
@@ -135,10 +159,35 @@ class svgAnimatedGraphs {
         this._container.appendChild(this._canvas);
         this.el.appendChild(this._container);
 
+        //this._createGradientReference('#334488', '#ff9988');
+
         this._listeners.canvasSizer && window.removeEventListener('resize', this._listeners.canvasSizer);
         window.addEventListener('resize', this._listeners.canvasSizer = () => {
             this._render(0, false);
         });
+    }
+
+    _createGradientReference(from, to) {
+        let def = this._canvas.getElementsByTagNameNS(svgNS, 'defs');
+        if(!def) {
+            def = document.createElementNS(svgNS, 'defs');
+            this._canvas.appendChild(def);
+        }
+
+        const grad = document.createElementNS(svgNS, 'linearGradient');
+
+        const stop1 = document.createElementNS(svgNS, 'stop');
+        stop1.setAttributeNS(svgNS, 'offset', '0%');
+        stop1.setAttributeNS(svgNS, 'stop-color', from);
+
+        const stop2 = document.createElementNS(svgNS, 'stop');
+        stop2.setAttributeNS(svgNS, 'offset', '100%');
+        stop2.setAttributeNS(svgNS, 'stop-color', to);
+
+        grad.appendChild(stop1);
+        grad.appendChild(stop2);
+
+        def.appendChild(grad);
     }
 
     /**
@@ -499,6 +548,9 @@ class svgAnimatedGraphs {
             combinedShapes = this._paths.map((item, index) => shape(oldPaths[index] || oldPaths[0], item));
         }
 
+        const gridShapes = this._drawGrid();
+        render(this._canvas, ...gridShapes);
+
         this._animate(fields, combinedShapes, duration);
     }
 
@@ -733,7 +785,7 @@ class svgAnimatedGraphs {
         const aRad = aCalc * Math.PI / 180;
         const z = Math.sqrt(2 * l * l - (2 * l * l * Math.cos(aRad)));
 
-        const x = aCalc <= 90 ? l * Math.sin(aRad) : l*Math.sin((180 - aCalc) * Math.PI / 180);
+        const x = aCalc <= 90 ? l * Math.sin(aRad) : l * Math.sin((180 - aCalc) * Math.PI / 180);
 
         const Y = Math.sqrt(z * z - x * x);
         const X = a <= 180 ? l + x : l - x;
@@ -743,7 +795,7 @@ class svgAnimatedGraphs {
             pathString = `M ${l},${l} ${pathString.replace('M', 'L')} z`;
         }
 
-        const transformed = svgParth(pathString)
+        const transformed = svgPath(pathString)
             .rotate(R, l, l)
             .translate(xOffset, yOffset)
             .round(4)
@@ -878,18 +930,118 @@ class svgAnimatedGraphs {
             text.textContent += this.options.units;
         }
 
-        const line = shape({
-            type: 'line',
-            x1: 0,
-            x2: this._width,
-            y1: 10,
-            y2: 10,
-            stroke: `rgba(0,0,0,${this.options.opacity})`,
-            'stroke-width': 0.1
-        });
+        if(!this.options.grid.enabled) {
+            render(this._canvas, shape({
+                type: 'line',
+                x1: 0,
+                x2: this._width,
+                y1: 10,
+                y2: 10,
+                stroke: `rgba(0,0,0,${this.options.opacity})`,
+                'stroke-width': 0.1
+            }));
+        }
+
 
         this._container.appendChild(text);
-        render(this._canvas, line);
+    }
+
+    _drawGrid() {
+        const {grid} = this.options;
+        if(!grid.enabled) {
+            return [];
+        }
+
+        const dist = {
+            x: this.extents.x[1] - this.extents.x[0],
+            y: this.extents.y[1] - this.extents.y[0]
+        };
+
+        const lines = {
+            vertical: [],
+            horizontal: []
+        };
+
+        if(grid.x.enabled) {
+            //draw vertical lines
+            let everyX = grid.x.every;
+            if (everyX === 'auto') {
+                everyX = Math.floor(dist.x / 6);
+            }
+
+            const startX = grid.x.start !== 0 ? grid.x.start : everyX;
+
+            for (let i = startX; i <= dist.x; i += everyX) {
+                const percent = i / dist.x;
+                lines.vertical.push(this._createGridLineSpec('vertical', percent));
+            }
+
+            grid.x.ends.left && lines.vertical.push(this._createGridLineSpec('vertical', 0));
+            grid.x.ends.right && lines.vertical.push(this._createGridLineSpec('vertical', 1));
+        }
+
+        if(grid.y.enabled) {
+            //draw horizontal lines
+            let everyY = grid.y.every;
+            if (everyY === 'auto') {
+                everyY = Math.floor(dist.y / 6);
+            }
+
+            const startY = grid.y.start !== 0 ? grid.y.start : everyY;
+
+            for (let i = startY; i <= dist.y; i += everyY) {
+                const percent = 1 - (i / dist.y);
+                lines.horizontal.push(this._createGridLineSpec('horizontal', percent));
+            }
+
+            grid.y.ends.top && lines.horizontal.push(this._createGridLineSpec('horizontal', 0));
+            grid.y.ends.bottom && lines.horizontal.push(this._createGridLineSpec('horizontal', 1));
+        }
+
+        const shapes = [];
+        if(lines.vertical.length > 0) {
+            shapes.push(shape({
+                type: 'g',
+                shapes: lines.vertical,
+                class: 'grid-lines-vertical'
+            }));
+        }
+        if(lines.horizontal.length > 0) {
+            shapes.push(shape({
+                type: 'g',
+                shapes: lines.horizontal,
+                class: 'grid-lines-horizontal'
+            }));
+        }
+        return shapes;
+    }
+
+    _createGridLineSpec(direction, position) {
+        let points = {};
+        switch (direction) {
+            case 'horizontal':
+                points = {
+                    x1: 0,
+                    x2: this._width,
+                    y1: (100 * position) + 10,
+                    y2: (100 * position) + 10
+                };
+                break;
+            case 'vertical':
+                points = {
+                    x1: this._width * position,
+                    x2: this._width * position,
+                    y1: 10,
+                    y2: 110
+                };
+                break;
+        }
+
+        return  Object.assign({
+            type: 'line',
+            stroke: `rgba(0,0,0,${this.options.opacity})`,
+            'stroke-width': 0.1
+        }, points);
     }
 }
 

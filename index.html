@@ -45,6 +45,19 @@
                 data: data,
                 interpolate: true,
                 units: 'mb',
+                grid: {
+                    enabled: true,
+                    x: {
+                        enabled: false
+                    },
+                    y: {
+                        every: 10,
+                        ends: {
+                            top: true,
+                            bottom: false
+                        }
+                    }
+                }
                 // seriesProperties: {
                 //     noise: {
                 //         'stroke-dasharray': '3,2'
