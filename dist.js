@@ -1,19 +1,44 @@
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.svgAnimatedGraphs = f()}})(function(){var define,module,exports;return (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 'use strict';
 
-const { shape, plainShapeObject, render, play, timeline } = require('wilderness');
+const { shape, render, play, timeline } = require('wilderness');
 const rounding = require('./rounding');
+const svgPath = require('svgpath');
+const merge = require('deepmerge');
 
 const defaultOptions = {
     animateIn: true,
     interpolate: true,
     opacity: 0.7,
-    fill: true,
+    type: 'area',
     offsetAnimate: false,
-    lineWidth: 0.4,
+    lineWidth: 0.6,
     rounding: 0.25,
     width: '100%',
     height: '100%',
+    groupMode: 'stacked',
+    groupGap: 5,
+    grid: {
+        enabled: false,
+        x: {
+            enabled: true,
+            every: 'auto',
+            start: 0,
+            ends: {
+                left: true,
+                right: true
+            }
+        },
+        y: {
+            enabled: true,
+            every: 'auto',
+            start: 0,
+            ends: {
+                top: true,
+                bottom: true
+            }
+        }
+    },
     colors: [
         [255, 0, 0],
         [255, 255, 0],
@@ -23,7 +48,15 @@ const defaultOptions = {
     showExtent: true,
 };
 
-const optionsAffectingRender = ['fill', 'colors', 'opacity', 'interpolate', 'line-width', 'extents', 'showExtent'];
+const optionsRerender = ['showExtent'];
+const optionsRedraw = ['type', 'colors', 'opacity', 'interpolate', 'lineWidth', 'extents', 'groupMode'];
+const lineTypes = ['line', 'area'];
+const roundTypes = ['donut', 'pie'];
+const barTypes = ['bar', 'column'];
+const fillTypes = ['area', 'pie'].concat(barTypes);
+const extentTypes = [].concat(lineTypes, barTypes);
+const allowedTypes = [].concat(lineTypes, roundTypes, barTypes);
+const lineWeightMultiplier = {donut: 10};
 
 const svgNS = 'http://www.w3.org/2000/svg';
 
@@ -34,12 +67,14 @@ class svgAnimatedGraphs {
     /**
      * Extents object
      * @typedef {Object} Extents
-     * @property {Object} x - extents for the x axis
-     * @property {Number} x.min - minimum value on the x axis
-     * @property {Number} x.max - maximum value on the x axis
-     * @property {Object} y - extents for the x axis
-     * @property {Number} y.min - minimum value on the y axis
-     * @property {Number} y.max - maximum value on the y axis
+     * @property {Extent} x - extents for the x axis
+     * @property {Extent} y - extents for the x axis
+     */
+
+    /** Extent Object
+     * @typedef {Object} Extent
+     * @property {Number} min - minimum value on axis
+     * @property {Number} max - maximum value on axis
      */
 
     /**
@@ -53,14 +88,16 @@ class svgAnimatedGraphs {
      * @property {string} [options.height=100%] - a valid size string to set to the height for the graph relative to the parent element
      * @property {boolean} [options.animateIn=true] - animate initial data from nothing
      * @property {boolean} [options.interpolate=true] - interpolate points to make the graph rounded
-     * @property {boolean} [options.fill=true] - fill the graph splines (if false a line graph is rendered)
+     * @property {string} [options.type=area] - graph type (line, area, more coming soon...)
      * @property {boolean} [options.offsetAnimate=true] - animate each dataset one at a time
      * @property {boolean} [options.showExtent=true] - show max y value extent line on graph
      * @property {number} [options.opacity=0.7] - opacity value for data set rendering
      * @property {number} [options.lineWidth=0.4] - width of lines when rendering without fill
      * @property {array} [options.colors] - an array of vector 3 values for graph dataset rendering
      * @property {number} [options.rounding=0.25] - amount of rounding to apply if interpolation is enabled
-     * @property {Extents} [options.extents} - absolute values for graph extents (by default these will be calculated from the data sets
+     * @property {Extents} [options.extents] - absolute values for graph extents (by default these will be calculated from the data sets
+     * @property {string[]} [options.ignoreFields] - fields to ignore in the data objects array
+     * @property {string} [options.groupMode=stacked] - how to group bars etc
      */
 
     /**
@@ -68,19 +105,34 @@ class svgAnimatedGraphs {
      * @param options {Options}
      */
     constructor(options) {
-        this.options = Object.assign({}, defaultOptions, options);
+        this.options = merge.all([defaultOptions, options], {clone: false});
         this._listeners = {};
+
+        console.log(this.options);
+
         if(!this.options.el) {
             throw new Error('you must provide a parent element | options.el');
         }
+
+        if(!allowedTypes.includes(this.options.type)) {
+            throw new Error(`type '${this.options.type}' not allowed.`);
+        }
+
         this.el = this.options.el;
+
         if(this.options.data) {
             this._validateData(this.options.data);
             this.data = this.options.data;
         }
+
         this._paths = [];
+        this._preRenderData = [];
+        this._animation = null;
+        this._animateTimeout = 0;
+
         this._createCanvas();
         this.extents = this._getExtents(this.data);
+
         if(this.options.animateIn || !this.data) {
             this._createInitial(this.data);
         } else {
@@ -100,16 +152,67 @@ class svgAnimatedGraphs {
         this._canvas.setAttribute('viewBox', `0 0 ${renderWidth} ${renderHeight}`);
         this._canvas.setAttribute('width', this.options.width);
         this._canvas.setAttribute('height', this.options.height);
+        this._canvas.setAttribute('overflow', 'visible');
         this._canvas.setAttribute('preserveAspectRatio', 'none');
         this._canvas.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         this._canvas.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
         this._container.appendChild(this._canvas);
         this.el.appendChild(this._container);
+
+        //this._createGradientReference('#334488', '#ff9988');
+
+        this._listeners.canvasSizer && window.removeEventListener('resize', this._listeners.canvasSizer);
+        window.addEventListener('resize', this._listeners.canvasSizer = () => {
+            this._render(0, false);
+        });
     }
 
+    _createGradientReference(from, to) {
+        let def = this._canvas.getElementsByTagNameNS(svgNS, 'defs');
+        if(!def) {
+            def = document.createElementNS(svgNS, 'defs');
+            this._canvas.appendChild(def);
+        }
+
+        const grad = document.createElementNS(svgNS, 'linearGradient');
+
+        const stop1 = document.createElementNS(svgNS, 'stop');
+        stop1.setAttributeNS(svgNS, 'offset', '0%');
+        stop1.setAttributeNS(svgNS, 'stop-color', from);
+
+        const stop2 = document.createElementNS(svgNS, 'stop');
+        stop2.setAttributeNS(svgNS, 'offset', '100%');
+        stop2.setAttributeNS(svgNS, 'stop-color', to);
+
+        grad.appendChild(stop1);
+        grad.appendChild(stop2);
+
+        def.appendChild(grad);
+    }
+
+    /**
+     * set view height (mostly to enabled/disable top extent)
+     * @param {number} height - canvas render height
+     * @private
+     */
     _setViewableHeight(height) {
-        this._canvas.setAttribute('viewBox', `0 ${renderHeight - height} ${renderWidth} ${height}`);
+        const ratio = this._container.offsetWidth / this._container.offsetHeight;
+        this._setAspectRatio(ratio, height);
+    }
+
+    /**
+     * set aspect ratio of the canvas
+     * @param {number} ratio - width/height ratio
+     * @param {number} height - canvas render height
+     * @private
+     */
+    _setAspectRatio(ratio, height) {
+        if (height * ratio !== this._width) {
+            this._width = height * ratio;
+        }
+        this._ratio = ratio / 100 * height;
+        this._canvas.setAttribute('viewBox', `0 ${renderHeight - height} ${this._width} ${height}`);
     }
 
     /**
@@ -119,7 +222,9 @@ class svgAnimatedGraphs {
      */
     _getReserved() {
         const reserved = [this.options.xAxisField];
-
+        if(this.options.ignoreFields) {
+            return reserved.concat(this.options.ignoreFields);
+        }
         return reserved;
     }
 
@@ -147,7 +252,7 @@ class svgAnimatedGraphs {
             const placeholder = this._createEmpty(this.options.colors[0]);
             this._paths = [placeholder];
 
-            render(this._canvas, placeholder);
+            render(this._canvas, shape(placeholder));
         }
     }
 
@@ -173,21 +278,23 @@ class svgAnimatedGraphs {
     /**
      * get the style attributes for a series
      * @param {array} color - rgb vector 3 color array
-     * @param {string} key - series key
+     * @param {string|null} key - series key
      * @private
      */
-    _getStyle(color, key) {
+    _getStyle(color, key = null) {
         let style = {};
 
-        if(this.options.fill) {
+        if(fillTypes.includes(this.options.type)) {
             style.fill = `rgba(${color[0]},${color[1]},${color[2]}, ${this.options.opacity})`;
-            style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, 0)`
+            style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, 0)`;
         } else {
             style.fill = `rgba(${color[0]},${color[1]},${color[2]}, 0)`;
             style.stroke = `rgba(${color[0]},${color[1]},${color[2]}, ${this.options.opacity})`;
         }
 
-        style['stroke-width'] = this.options.lineWidth;
+        const multiplier = lineWeightMultiplier[this.options.type] || 1;
+
+        style['stroke-width'] = this.options.lineWidth * multiplier;
 
         if(this.options.seriesProperties) {
             const globalProps = Object.entries(this.options.seriesProperties).reduce((acc, [k, v]) => {
@@ -217,7 +324,7 @@ class svgAnimatedGraphs {
             points += ` L ${loc},${renderHeight - 0.1}`;
         }
 
-        if(this.options.fill) {
+        if(fillTypes.includes(this.options.type)) {
             points += `L ${renderHeight},${renderHeight} L 0,${renderHeight} Z`;
         }
 
@@ -230,7 +337,7 @@ class svgAnimatedGraphs {
             spec.class = className;
         }
 
-        return shape(Object.assign({}, this._getStyle(color), spec));
+        return Object.assign({}, this._getStyle(color), spec);
     }
 
     /**
@@ -287,7 +394,7 @@ class svgAnimatedGraphs {
             return {
                 x: [0, 1],
                 y: [0, 1]
-            }
+            };
         }
 
         const fields = this._getUnreservedFields(data);
@@ -328,84 +435,197 @@ class svgAnimatedGraphs {
         return {
             x,
             y
-        }
+        };
     }
 
     /**
      * update the options to change the rendering style etc
      * @param {Options} options - partial options block to update options
-     * @param {number} [duration=1000} - duration (in milliseconds) for animation if rerendering is required
+     * @param {number} [duration=1000] - duration (in milliseconds) for animation if rerender is required
      */
     setOptions(options, duration = 1000) {
+        if(options.type && !allowedTypes.includes(options.type)) {
+            throw new Error(`type '${options.type}' not allowed.`);
+        }
+
         Object.assign(this.options, options);
 
-        const rerender = Object.keys(options).reduce((render, key) => {
-            if (optionsAffectingRender.includes(key)) {
-                return true;
-            }
-            return render;
-        }, false);
+        const redraw = Object.keys(options).reduce((render, key) => optionsRedraw.includes(key) || render, false);
+        const rerender = Object.keys(options).reduce((render, key) => optionsRerender.includes(key) || render, false);
+
+        if(redraw) {
+            this.setData(this.data, duration);
+        }
 
         if(rerender) {
-            this.setData(this.data, duration);
+            this._render(0, false);
         }
     }
 
     /**
      * update the dataset (pass full dataset)
      * @param {array} data - new graph data
-     * @param {number} [duration=1000} - duration (in milliseconds) for animation to the new data
+     * @param {number} [duration=1000] - duration (in milliseconds) for animation to the new data
      */
     setData(data, duration = 1000) {
         this._validateData(data);
 
         this.data = data;
         this.extents = this._getExtents(this.data);
-        const fields = this._getFields(this.data);
+        const fields = this._getUnreservedFields(this.data);
 
         const xKey = this.options.xAxisField;
-        const paths = fields.filter(field => field !== xKey).map(field => this._createLine(xKey, field));
 
-        const oldPaths = this._paths;
-        this._paths = paths.map(path => this._drawPath(path));
-
-        if(!oldPaths || oldPaths.length < 1) {
-            return render(this._canvas, ...this._paths);
+        if (lineTypes.includes(this.options.type)) {
+            this._preRenderData = fields.map(field => this._createLine(xKey, field));
+        }
+        else if (roundTypes.includes(this.options.type)) {
+            this._preRenderData = fields.map(field => this._createSegment(xKey, field));
+        } 
+        else if (barTypes.includes(this.options.type)) {
+            this._preRenderData = this.data.map(obj => this._createBarGroup(xKey, obj));
         }
 
-        const combinedPaths = paths.map((item, index) => shape(plainShapeObject(oldPaths[index] || oldPaths[0]), plainShapeObject(this._paths[index])));
+        this._render(duration);
+    }
+
+    /**
+     * render the data to the canvas
+     * @param {number} duration - duration of animation
+     * @param {boolean} animate - weather or not to animate the transition
+     * @private
+     */
+    _render(duration = 1000, animate = true) {
+        if(this._animation && !this._animation.state.finished) {
+            clearTimeout(this._animateTimeout);
+            this._animateTimeout = setTimeout(this._render.bind(this, duration, animate), 50);
+            return;
+        }
+
+        const oldPaths = this._paths;
+        const fields = this._getUnreservedFields(this.data);
 
         this._clearCanvas();
 
-        if (this.options.offsetAnimate) {
-            const animation = timeline(...combinedPaths, {
-                duration
-            });
-            render(this._canvas, animation);
-            play(animation);
-        } else {
-            combinedPaths.forEach(path => {
-                const animation = timeline(path, {
-                    duration
-                });
-                render(this._canvas, animation);
-                play(animation);
-            });
-        }
-
-        if(this.options.showExtent) {
+        if(this.options.showExtent && extentTypes.includes(this.options.type)) {
             this._setViewableHeight(110);
             this._renderText();
         } else {
             this._setViewableHeight(100);
         }
+
+        if (lineTypes.includes(this.options.type)) {
+            // render line or area
+            this._paths = this._preRenderData.map(this._drawLinePath.bind(this));
+        } else if (roundTypes.includes(this.options.type)) {
+            // render pie or donut
+            const total = this._preRenderData.reduce((acc, seg) => acc + seg.value, 0);
+            let rotationAcc = 0;
+            this._paths = this._preRenderData.map(segment => {
+                const path = this._drawRoundPath(segment, total, rotationAcc);
+                rotationAcc += segment.value;
+                return path;
+            });
+        } else if(barTypes.includes(this.options.type)) {
+            //render bar or column
+            const total = this._preRenderData.reduce((acc, group) => Math.max(acc, group.max), 0);
+            this._paths = [].concat(...this._preRenderData
+                .map((data, index) => this._drawBarGroup(data, this._preRenderData.length, index, total)));
+        } else {
+            throw new Error('not yet implemented');
+        }
+
+        if(!oldPaths || oldPaths.length < 1 || !animate || duration < 1) {
+            return render(this._canvas, ...this._paths.map(path => shape(path)));
+        }
+
+        let combinedShapes;
+        if(this._paths.length > fields.length && this._paths.length !== oldPaths.length) {
+            const remaining = this._paths.slice(oldPaths.length, this._paths.length);
+            combinedShapes = oldPaths
+                .map((value, index) => shape(value, this._paths[index]))
+                .concat(remaining.map(def => shape(this._drawMinimisedShape(def), def)));
+        } else {
+            combinedShapes = this._paths.map((item, index) => shape(oldPaths[index] || oldPaths[0], item));
+        }
+
+        const gridShapes = this._drawGrid();
+        render(this._canvas, ...gridShapes);
+
+        this._animate(fields, combinedShapes, duration);
     }
+
+    /**
+     * build animation timeline and run it
+     * @param {string[]} fields - list of fields being rendered in the graph
+     * @param {Shape[]} combinedShapes - add shapes to be rendered (with start and end animation frames)
+     * @param {number} duration - duration to render for
+     * @private
+     */
+    _animate(fields, combinedShapes, duration) {
+        if (this.options.offsetAnimate) {
+            const chunks = combinedShapes.chunk(fields.length);
+            const tl = [].concat(...chunks.map((chunk, cIndex) => {
+                return chunk.map((item, iIndex) => {
+                    const queue = {};
+                    if(iIndex > 0) {
+                        queue.after = `${cIndex}-${iIndex - 1}`;
+                    } else if(cIndex > 0 || iIndex > 0) {
+                        queue.offset = cIndex * 100;
+                        queue.at = '0-0';
+                    }
+                    return [
+                        item,
+                        {
+                            name: `${cIndex}-${iIndex}`,
+                            queue
+                        }
+                    ];
+                });
+            }));
+
+            this._animation = timeline(...tl, {
+                duration
+            });
+            render(this._canvas, this._animation);
+            play(this._animation);
+        } else {
+            this._animation = timeline(...combinedShapes.map((path, index) => {
+                const queue = {};
+                if (index) {
+                    queue.at = 0;
+                }
+                return [path, {
+                    name: index,
+                    queue
+                }];
+            }), {
+                duration
+            });
+            render(this._canvas, this._animation);
+            play(this._animation);
+        }
+    }
+
+    /**
+     * Spatial Point
+     * @typedef {number[]} Point
+     */
+
+    /**
+     * Line Path Object
+     * @typedef {object} LinePath
+     * @property {string} key - line legend key
+     * @property {number[]} color - color array (vector 3 r,g,b (0 - 256))
+     * @property {Point[]} path - array of points to plot the line
+     */
 
     /**
      * create a vector 2 point output for a single line dataset
      * @param {string} xKey - the value to use for the x axis
-     * @param {string} yKey - the value to use for the y axis
+     * @param {string} yKey - the value to use for the y axis for this line
      * @private
+     * @returns {LinePath}
      */
     _createLine(xKey, yKey) {
         const index = this._getUnreservedFields(this.data).indexOf(yKey);
@@ -423,26 +643,103 @@ class svgAnimatedGraphs {
                     ((y - this.extents.y[0]) / (this.extents.y[1] - this.extents.y[0])) * 100,
                 ]]);
             }, [])
-        }
+        };
+    }
+
+    /**
+     * Segment spec
+     * @typedef Segment
+     * @property {string} key - Segment legend key
+     * @property {number[]} color - color array (vector 3 r,g,b (0 - 256))
+     * @property {number} value - total value assigned to the segment
+     */
+
+    /**
+     * create a spec for a pie/donut segment
+     * @param {string} xKey - the value to use for the x axis
+     * @param {string} yKey - the value to use for the y axis for this segment
+     * @returns {Segment}
+     * @private
+     */
+    _createSegment(xKey, yKey) {
+        const index = this._getUnreservedFields(this.data).indexOf(yKey);
+        return {
+            key: yKey,
+            color: this.options.colors[index],
+            value: this.data.reduce((val, item) => {
+                const x = item[xKey];
+                const y = item[yKey];
+                if (typeof x === 'undefined' || typeof y === 'undefined') {
+                    return val;
+                }
+                return val + y;
+            }, 0)
+        };
+    }
+
+    /**
+     * Bar Spec
+     * @typedef Bar
+     * @property {string} key - field key
+     * @property {number} value - bar representation value
+     * @property {array} color - rgb vector 3 color array
+     */
+
+    /**
+     * Bar Group Spec
+     * @typedef BarGroup
+     * @property {string|number} group - xAxis label for the group
+     * @property {string} group - type (stacked or grouped)
+     * @property {number} max - group maximum extent (max value when not stacked, combined values when stacked)
+     * @property {Bar} quadrants - spec for the bars in the group
+     */
+
+    /**
+     * create a spec for a bar group
+     * @param {string} xKey - the value to use for the x axis
+     * @param {object} data - single data entry point object (key value)
+     * @returns {BarGroup}
+     * @private
+     */
+    _createBarGroup(xKey, data) {
+        const stacked = this.options.groupMode === 'stacked';
+        const fields = this._getUnreservedFields(this.data);
+        return {
+            group: xKey,
+            type: stacked ? 'stacked' : 'group',
+            max: fields.reduce((acc, field) => {
+                const val = data[field];
+                if (stacked) {
+                    return acc + val;
+                }
+                return Math.max(acc, val);
+            }, 0),
+            quadrants: fields.map(field => ({
+                key: field,
+                value: data[field],
+                color: this.options.colors[fields.indexOf(field)]
+            }))
+        };
     }
 
     /**
      * return the point as an SVG operation
      * @param {string} prefix - operation marker
-     * @param {string} point - vector 2 point map
+     * @param {Point} point - vector 2 point map
      * @returns {string} operation
      * @private
      */
     _getPoint(prefix, point) {
-        return `${prefix} ${point[0]},${renderHeight - point[1]}`
+        return `${prefix} ${point[0] * this._ratio},${renderHeight - point[1]}`;
     }
 
     /**
      * create a shape output for a single series
-     * @param {array} data - new graph data
+     * @param {LinePath} data - Line path data
      * @private
+     * @returns {Shape}
      */
-    _drawPath(data) {
+    _drawLinePath(data) {
         let pathString = data.path.reduce((string, point) => {
             if(string === '') {
                 string = this._getPoint('M', point);
@@ -456,22 +753,155 @@ class svgAnimatedGraphs {
             pathString = rounding(pathString, 0.25, true);
         }
 
-        if(this.options.fill) {
+        if(fillTypes.includes(this.options.type)) {
             const last = data.path[data.path.length - 1];
             const first = data.path[0];
-            pathString += ` L ${last[0]}, ${renderHeight} L ${first[0]},${renderHeight} Z`;
+            pathString += `${this._getPoint(' L', [last[0], 0])}${this._getPoint(' L', [first[0], 0])} Z`;
         }
 
 
-        const pathEl = shape(Object.assign({}, this._getStyle(data.color, data.key), {
+       return Object.assign({}, this._getStyle(data.color, data.key), {
             type: 'path',
             d: pathString,
             class: `plot-${data.key}-values`,
-        }));
-
-        return pathEl;
+        });
     }
 
+    /**
+     * create a shape output for a pie/donut segment
+     * @param {Segment} data - new graph data
+     * @param {number} total - total of all values for pie
+     * @param {number} rotation - start rotation for segment
+     * @private
+     * @returns {Object} Shape Definition
+     */
+    _drawRoundPath(data, total, rotation) {
+        const l = 50 - ((this.options.lineWidth * (lineWeightMultiplier[this.options.type] || 1)) / 2);
+        const xOffset = (50 * this._ratio) - l;
+        const yOffset = 10 + (50 - l);
+
+        const a = 360 * (data.value / total);
+        const R = 360 * (rotation / total);
+        const aCalc = (a > 180) ? 360 - a : a;
+        const aRad = aCalc * Math.PI / 180;
+        const z = Math.sqrt(2 * l * l - (2 * l * l * Math.cos(aRad)));
+
+        const x = aCalc <= 90 ? l * Math.sin(aRad) : l * Math.sin((180 - aCalc) * Math.PI / 180);
+
+        const Y = Math.sqrt(z * z - x * x);
+        const X = a <= 180 ? l + x : l - x;
+
+        let pathString = `M ${l},0 A ${l},${l} 1 0,1 ${X},${Y}`;
+        if(fillTypes.includes(this.options.type)) {
+            pathString = `M ${l},${l} ${pathString.replace('M', 'L')} z`;
+        }
+
+        const transformed = svgPath(pathString)
+            .rotate(R, l, l)
+            .translate(xOffset, yOffset)
+            .round(4)
+            .toString();
+
+        return Object.assign(
+            {},
+            this._getStyle(data.color, data.key),
+            {
+                type: 'path',
+                d: transformed,
+                class: `plot-${data.key}-values`,
+            }
+        );
+    }
+
+    /**
+     * draw a single data point group as bars
+     * @param {object} group - group defination object
+     * @param groupCount
+     * @param groupIndex
+     * @param max
+     * @returns {object[]} Shape Definition
+     * @private
+     */
+    _drawBarGroup(group, groupCount, groupIndex, max) {
+        const gap = this.options.groupGap / 10;
+        const groupWidth = (100 / groupCount) - gap;
+        const groupStart = (groupWidth + gap) * groupIndex;
+
+        const barWidth = group.type === 'stacked' ? groupWidth :
+            groupWidth / Object.keys(group.quadrants).length;
+
+        let stackHeight = 0;
+        const direction = this.options.type === 'bar' ? 'vertical' : 'horizontal';
+
+        return group.quadrants.map(({key, value, color}, index) => {
+            const barStart = (group.type === 'stacked' ? 0 : barWidth * index) + groupStart;
+            const height = (value / max) * 100;
+            const barPart = Object.assign(
+                {},
+                this._getStyle(color, key),
+                {
+                    type: 'rect',
+                    class: `plot-${key}-values`
+                },
+                this._barRotation(direction, height, barStart, barWidth, stackHeight)
+            );
+
+            stackHeight += group.type === 'stacked' ? height : 0;
+
+            return barPart;
+        });
+    }
+
+    /**
+     * calculate horizonatl or vertical position for a bar based on the chart direction
+     * @param {string} direction - horizontal or vertical
+     * @param {number} value - percentage value for the bar
+     * @param {number} barStart - percentage of where the bar should start along the X Axis
+     * @param {number} barWidth - the width to render the bar
+     * @param {number} stackHeight - percentage height to start the bar render from (for stack bars)
+     * @returns {object} defines x, y, width and height
+     * @private
+     */
+    _barRotation(direction, value, barStart, barWidth, stackHeight) {
+        if(direction === 'horizontal') {
+            return {
+                x: stackHeight * this._ratio,
+                y: barStart + 10,
+                width: value * this._ratio,
+                height: barWidth
+            };
+        } else {
+            return {
+                x: barStart * this._ratio,
+                y: 110 - stackHeight,
+                width: barWidth * this._ratio,
+                height: - value
+            };
+        }
+    }
+
+    /**
+     * draw bars minimised so that they can be scaled up from 0
+     * @param {object} shape - bar spec
+     * @returns {object} new minimised bar spec
+     * @private
+     */
+    _drawMinimisedShape(shape) {
+        if (!barTypes.includes(this.options.type)) {
+            return shape;
+        }
+
+        if(this.options.type === 'bar') {
+            return Object.assign({}, shape, {y: 110, height: 0});
+        } else {
+            return Object.assign({}, shape, {x: 0, width: 0});
+        }
+    }
+
+    /**
+     * get an array of keys from data to use as a legend
+     * @returns {array} array of legend items
+     */
     getLegendData() {
         return this._getUnreservedFields(this.data).map((key, index) => {
             const color = this.options.colors[index];
@@ -479,48 +909,261 @@ class svgAnimatedGraphs {
                 index,
                 label: key,
                 color: `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${this.options.opacity})`
-            }
+            };
         });
     }
 
+    /**
+     * render extent text
+     * @private
+     */
     _renderText() {
         const text = document.createElement('span');
         text.style.position = 'absolute';
-        text.style.top = (this._container.offsetHeight / 110) * 1.5;
-        text.style.left = (this._container.offsetHeight / 110) * 1.5;
-        text.style.fontSize = (this._container.offsetHeight / 110) * 6;
+        text.style.top = `${(this._container.offsetHeight / 110) * 1.5}px`;
+        text.style.left = `${(this._container.offsetHeight / 110) * 1.5}px`;
+        text.style.fontSize = `${(this._container.offsetHeight / 110) * 6}px`;
         text.style.textTransform = 'uppercase';
-        text.style.opacity = this.options.opacity;
-
-        this._listeners.textResize && window.removeEventListener(this._listeners.textResize);
-        this._listeners.textResize = window.addEventListener('resize', () => {
-            text.style.top = (this._container.offsetHeight / 110) * 1.5;
-            text.style.left = (this._container.offsetHeight / 110) * 1.5;
-            text.style.fontSize = (this._container.offsetHeight / 110) * 6;
-        });
+        text.style.opacity = this.options.opacity.toString(10);
 
         text.textContent = this.extents.y[1];
         if(this.options.units) {
             text.textContent += this.options.units;
         }
 
-        const line = shape({
-            type: 'line',
-            x1: 0,
-            x2: 100,
-            y1: 10,
-            y2: 10,
-            stroke: `rgba(0,0,0,${this.options.opacity})`,
-            'stroke-width': 0.1
-        });
+        if(!this.options.grid.enabled) {
+            render(this._canvas, shape({
+                type: 'line',
+                x1: 0,
+                x2: this._width,
+                y1: 10,
+                y2: 10,
+                stroke: `rgba(0,0,0,${this.options.opacity})`,
+                'stroke-width': 0.1
+            }));
+        }
+
 
         this._container.appendChild(text);
-        render(this._canvas, line);
+    }
+
+    _drawGrid() {
+        const {grid} = this.options;
+        if(!grid.enabled) {
+            return [];
+        }
+
+        const dist = {
+            x: this.extents.x[1] - this.extents.x[0],
+            y: this.extents.y[1] - this.extents.y[0]
+        };
+
+        const lines = {
+            vertical: [],
+            horizontal: []
+        };
+
+        if(grid.x.enabled) {
+            //draw vertical lines
+            let everyX = grid.x.every;
+            if (everyX === 'auto') {
+                everyX = Math.floor(dist.x / 6);
+            }
+
+            const startX = grid.x.start !== 0 ? grid.x.start : everyX;
+
+            for (let i = startX; i <= dist.x; i += everyX) {
+                const percent = i / dist.x;
+                lines.vertical.push(this._createGridLineSpec('vertical', percent));
+            }
+
+            grid.x.ends.left && lines.vertical.push(this._createGridLineSpec('vertical', 0));
+            grid.x.ends.right && lines.vertical.push(this._createGridLineSpec('vertical', 1));
+        }
+
+        if(grid.y.enabled) {
+            //draw horizontal lines
+            let everyY = grid.y.every;
+            if (everyY === 'auto') {
+                everyY = Math.floor(dist.y / 6);
+            }
+
+            const startY = grid.y.start !== 0 ? grid.y.start : everyY;
+
+            for (let i = startY; i <= dist.y; i += everyY) {
+                const percent = 1 - (i / dist.y);
+                lines.horizontal.push(this._createGridLineSpec('horizontal', percent));
+            }
+
+            grid.y.ends.top && lines.horizontal.push(this._createGridLineSpec('horizontal', 0));
+            grid.y.ends.bottom && lines.horizontal.push(this._createGridLineSpec('horizontal', 1));
+        }
+
+        const shapes = [];
+        if(lines.vertical.length > 0) {
+            shapes.push(shape({
+                type: 'g',
+                shapes: lines.vertical,
+                class: 'grid-lines-vertical'
+            }));
+        }
+        if(lines.horizontal.length > 0) {
+            shapes.push(shape({
+                type: 'g',
+                shapes: lines.horizontal,
+                class: 'grid-lines-horizontal'
+            }));
+        }
+        return shapes;
+    }
+
+    _createGridLineSpec(direction, position) {
+        let points = {};
+        switch (direction) {
+            case 'horizontal':
+                points = {
+                    x1: 0,
+                    x2: this._width,
+                    y1: (100 * position) + 10,
+                    y2: (100 * position) + 10
+                };
+                break;
+            case 'vertical':
+                points = {
+                    x1: this._width * position,
+                    x2: this._width * position,
+                    y1: 10,
+                    y2: 110
+                };
+                break;
+        }
+
+        return  Object.assign({
+            type: 'line',
+            stroke: `rgba(0,0,0,${this.options.opacity})`,
+            'stroke-width': 0.1
+        }, points);
     }
 }
 
+Object.defineProperty(Array.prototype, 'chunk', {
+    value: function(chunkSize) {
+        const R = [];
+        for (let i = 0; i < this.length; i += chunkSize)
+            R.push(this.slice(i, i + chunkSize));
+        return R;
+    }
+});
+
 module.exports = svgAnimatedGraphs;
-},{"./rounding":43,"wilderness":39}],2:[function(require,module,exports){
+},{"./rounding":51,"deepmerge":2,"svgpath":23,"wilderness":47}],2:[function(require,module,exports){
+(function (global, factory) {
+	typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
+	typeof define === 'function' && define.amd ? define(factory) :
+	(global.deepmerge = factory());
+}(this, (function () { 'use strict';
+
+var isMergeableObject = function isMergeableObject(value) {
+	return isNonNullObject(value)
+		&& !isSpecial(value)
+};
+
+function isNonNullObject(value) {
+	return !!value && typeof value === 'object'
+}
+
+function isSpecial(value) {
+	var stringValue = Object.prototype.toString.call(value);
+
+	return stringValue === '[object RegExp]'
+		|| stringValue === '[object Date]'
+		|| isReactElement(value)
+}
+
+// see https://github.com/facebook/react/blob/b5ac963fb791d1298e7f396236383bc955f916c1/src/isomorphic/classic/element/ReactElement.js#L21-L25
+var canUseSymbol = typeof Symbol === 'function' && Symbol.for;
+var REACT_ELEMENT_TYPE = canUseSymbol ? Symbol.for('react.element') : 0xeac7;
+
+function isReactElement(value) {
+	return value.$$typeof === REACT_ELEMENT_TYPE
+}
+
+function emptyTarget(val) {
+	return Array.isArray(val) ? [] : {}
+}
+
+function cloneUnlessOtherwiseSpecified(value, options) {
+	return (options.clone !== false && options.isMergeableObject(value))
+		? deepmerge(emptyTarget(value), value, options)
+		: value
+}
+
+function defaultArrayMerge(target, source, options) {
+	return target.concat(source).map(function(element) {
+		return cloneUnlessOtherwiseSpecified(element, options)
+	})
+}
+
+function getMergeFunction(key, options) {
+	if (!options.customMerge) {
+		return deepmerge
+	}
+	var customMerge = options.customMerge(key);
+	return typeof customMerge === 'function' ? customMerge : deepmerge
+}
+
+function mergeObject(target, source, options) {
+	var destination = {};
+	if (options.isMergeableObject(target)) {
+		Object.keys(target).forEach(function(key) {
+			destination[key] = cloneUnlessOtherwiseSpecified(target[key], options);
+		});
+	}
+	Object.keys(source).forEach(function(key) {
+		if (!options.isMergeableObject(source[key]) || !target[key]) {
+			destination[key] = cloneUnlessOtherwiseSpecified(source[key], options);
+		} else {
+			destination[key] = getMergeFunction(key, options)(target[key], source[key], options);
+		}
+	});
+	return destination
+}
+
+function deepmerge(target, source, options) {
+	options = options || {};
+	options.arrayMerge = options.arrayMerge || defaultArrayMerge;
+	options.isMergeableObject = options.isMergeableObject || isMergeableObject;
+
+	var sourceIsArray = Array.isArray(source);
+	var targetIsArray = Array.isArray(target);
+	var sourceAndTargetTypesMatch = sourceIsArray === targetIsArray;
+
+	if (!sourceAndTargetTypesMatch) {
+		return cloneUnlessOtherwiseSpecified(source, options)
+	} else if (sourceIsArray) {
+		return options.arrayMerge(target, source, options)
+	} else {
+		return mergeObject(target, source, options)
+	}
+}
+
+deepmerge.all = function deepmergeAll(array, options) {
+	if (!Array.isArray(array)) {
+		throw new Error('first argument should be an array')
+	}
+
+	return array.reduce(function(prev, next) {
+		return deepmerge(prev, next, options)
+	}, {})
+};
+
+var deepmerge_1 = deepmerge;
+
+return deepmerge_1;
+
+})));
+
+},{}],3:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -612,7 +1255,7 @@ var add = function add(shape, pointsRequired) {
 
 exports.curvedPoints = curvedPoints;
 exports.default = add;
-},{"./cubify":5,"./helpers":7}],3:[function(require,module,exports){
+},{"./cubify":6,"./helpers":8}],4:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -801,7 +1444,7 @@ var arcToBezier = function arcToBezier(_ref2) {
 };
 
 exports.default = arcToBezier;
-},{}],4:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -860,7 +1503,7 @@ var boundingBox = function boundingBox(s) {
 };
 
 exports.default = boundingBox;
-},{"./decurve":6,"./helpers":7}],5:[function(require,module,exports){
+},{"./decurve":7,"./helpers":8}],6:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -933,7 +1576,7 @@ var cubify = function cubify(s) {
 };
 
 exports.default = cubify;
-},{"./arcToBezier":3,"./helpers":7}],6:[function(require,module,exports){
+},{"./arcToBezier":4,"./helpers":8}],7:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1038,7 +1681,7 @@ var straighten = function straighten(prevPoint, point, accuracy) {
 };
 
 exports.default = decurve;
-},{"./add":2,"./cubify":5,"./helpers":7,"./length":9}],7:[function(require,module,exports){
+},{"./add":3,"./cubify":6,"./helpers":8,"./length":10}],8:[function(require,module,exports){
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -1082,7 +1725,7 @@ exports.applyFuncToShapes = applyFuncToShapes;
 exports.getShapeArray = getShapeArray;
 exports.isShapeArray = isShapeArray;
 exports.numberAtInterval = numberAtInterval;
-},{}],8:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1147,7 +1790,7 @@ exports.remove = _remove2.default;
 exports.reverse = _reverse2.default;
 exports.rotate = _rotate2.default;
 exports.scale = _scale2.default;
-},{"./add":2,"./boundingBox":4,"./cubify":5,"./length":9,"./moveIndex":10,"./offset":11,"./position":12,"./remove":13,"./reverse":14,"./rotate":15,"./scale":16}],9:[function(require,module,exports){
+},{"./add":3,"./boundingBox":5,"./cubify":6,"./length":10,"./moveIndex":11,"./offset":12,"./position":13,"./remove":14,"./reverse":15,"./rotate":16,"./scale":17}],10:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1187,7 +1830,7 @@ var linearLength = function linearLength(x1, y1, x2, y2) {
 
 exports.linearLength = linearLength;
 exports.default = length;
-},{"./decurve":6}],10:[function(require,module,exports){
+},{"./decurve":7}],11:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1290,7 +1933,7 @@ var splitLines = function splitLines(shape) {
 };
 
 exports.default = moveIndex;
-},{"./helpers":7}],11:[function(require,module,exports){
+},{"./helpers":8}],12:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1333,7 +1976,7 @@ var offset = function offset(s) {
 };
 
 exports.default = offset;
-},{"./helpers":7}],12:[function(require,module,exports){
+},{"./helpers":8}],13:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1440,7 +2083,7 @@ var within = function within(shape, length, desiredLength) {
 };
 
 exports.default = position;
-},{"./decurve":6,"./helpers":7,"./length":9}],13:[function(require,module,exports){
+},{"./decurve":7,"./helpers":8,"./length":10}],14:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1496,7 +2139,7 @@ var remove = function remove(s) {
 };
 
 exports.default = remove;
-},{"./helpers":7}],14:[function(require,module,exports){
+},{"./helpers":8}],15:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1549,7 +2192,7 @@ var reverse = function reverse(s) {
 };
 
 exports.default = reverse;
-},{"./cubify":5,"./helpers":7}],15:[function(require,module,exports){
+},{"./cubify":6,"./helpers":8}],16:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1623,7 +2266,7 @@ var rotate = function rotate(s, angle) {
 };
 
 exports.default = rotate;
-},{"./boundingBox":4,"./helpers":7}],16:[function(require,module,exports){
+},{"./boundingBox":5,"./helpers":8}],17:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1711,7 +2354,7 @@ var scale = function scale(s, scaleFactor) {
 };
 
 exports.default = scale;
-},{"./boundingBox":4,"./helpers":7}],17:[function(require,module,exports){
+},{"./boundingBox":5,"./helpers":8}],18:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -1897,7 +2540,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],18:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -1922,7 +2565,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 exports.toPath = _toPath2.default;
 exports.toPoints = _toPoints2.default;
 exports.valid = _valid2.default;
-},{"./toPath":19,"./toPoints":20,"./valid":21}],19:[function(require,module,exports){
+},{"./toPath":20,"./toPoints":21,"./valid":22}],20:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -2046,7 +2689,7 @@ var toPath = function toPath(s) {
 };
 
 exports.default = toPath;
-},{"./toPoints":20}],20:[function(require,module,exports){
+},{"./toPoints":21}],21:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -2443,7 +3086,7 @@ var getPointsFromG = function getPointsFromG(_ref12) {
 };
 
 exports.default = toPoints;
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -2561,7 +3204,1461 @@ var valid = function valid(shape) {
 };
 
 exports.default = valid;
-},{}],22:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
+'use strict';
+
+module.exports = require('./lib/svgpath');
+
+},{"./lib/svgpath":28}],24:[function(require,module,exports){
+// Convert an arc to a sequence of cubic bézier curves
+//
+'use strict';
+
+
+var TAU = Math.PI * 2;
+
+
+/* eslint-disable space-infix-ops */
+
+// Calculate an angle between two unit vectors
+//
+// Since we measure angle between radii of circular arcs,
+// we can use simplified math (without length normalization)
+//
+function unit_vector_angle(ux, uy, vx, vy) {
+  var sign = (ux * vy - uy * vx < 0) ? -1 : 1;
+  var dot  = ux * vx + uy * vy;
+
+  // Add this to work with arbitrary vectors:
+  // dot /= Math.sqrt(ux * ux + uy * uy) * Math.sqrt(vx * vx + vy * vy);
+
+  // rounding errors, e.g. -1.0000000000000002 can screw up this
+  if (dot >  1.0) { dot =  1.0; }
+  if (dot < -1.0) { dot = -1.0; }
+
+  return sign * Math.acos(dot);
+}
+
+
+// Convert from endpoint to center parameterization,
+// see http://www.w3.org/TR/SVG11/implnote.html#ArcImplementationNotes
+//
+// Return [cx, cy, theta1, delta_theta]
+//
+function get_arc_center(x1, y1, x2, y2, fa, fs, rx, ry, sin_phi, cos_phi) {
+  // Step 1.
+  //
+  // Moving an ellipse so origin will be the middlepoint between our two
+  // points. After that, rotate it to line up ellipse axes with coordinate
+  // axes.
+  //
+  var x1p =  cos_phi*(x1-x2)/2 + sin_phi*(y1-y2)/2;
+  var y1p = -sin_phi*(x1-x2)/2 + cos_phi*(y1-y2)/2;
+
+  var rx_sq  =  rx * rx;
+  var ry_sq  =  ry * ry;
+  var x1p_sq = x1p * x1p;
+  var y1p_sq = y1p * y1p;
+
+  // Step 2.
+  //
+  // Compute coordinates of the centre of this ellipse (cx', cy')
+  // in the new coordinate system.
+  //
+  var radicant = (rx_sq * ry_sq) - (rx_sq * y1p_sq) - (ry_sq * x1p_sq);
+
+  if (radicant < 0) {
+    // due to rounding errors it might be e.g. -1.3877787807814457e-17
+    radicant = 0;
+  }
+
+  radicant /=   (rx_sq * y1p_sq) + (ry_sq * x1p_sq);
+  radicant = Math.sqrt(radicant) * (fa === fs ? -1 : 1);
+
+  var cxp = radicant *  rx/ry * y1p;
+  var cyp = radicant * -ry/rx * x1p;
+
+  // Step 3.
+  //
+  // Transform back to get centre coordinates (cx, cy) in the original
+  // coordinate system.
+  //
+  var cx = cos_phi*cxp - sin_phi*cyp + (x1+x2)/2;
+  var cy = sin_phi*cxp + cos_phi*cyp + (y1+y2)/2;
+
+  // Step 4.
+  //
+  // Compute angles (theta1, delta_theta).
+  //
+  var v1x =  (x1p - cxp) / rx;
+  var v1y =  (y1p - cyp) / ry;
+  var v2x = (-x1p - cxp) / rx;
+  var v2y = (-y1p - cyp) / ry;
+
+  var theta1 = unit_vector_angle(1, 0, v1x, v1y);
+  var delta_theta = unit_vector_angle(v1x, v1y, v2x, v2y);
+
+  if (fs === 0 && delta_theta > 0) {
+    delta_theta -= TAU;
+  }
+  if (fs === 1 && delta_theta < 0) {
+    delta_theta += TAU;
+  }
+
+  return [ cx, cy, theta1, delta_theta ];
+}
+
+//
+// Approximate one unit arc segment with bézier curves,
+// see http://math.stackexchange.com/questions/873224
+//
+function approximate_unit_arc(theta1, delta_theta) {
+  var alpha = 4/3 * Math.tan(delta_theta/4);
+
+  var x1 = Math.cos(theta1);
+  var y1 = Math.sin(theta1);
+  var x2 = Math.cos(theta1 + delta_theta);
+  var y2 = Math.sin(theta1 + delta_theta);
+
+  return [ x1, y1, x1 - y1*alpha, y1 + x1*alpha, x2 + y2*alpha, y2 - x2*alpha, x2, y2 ];
+}
+
+module.exports = function a2c(x1, y1, x2, y2, fa, fs, rx, ry, phi) {
+  var sin_phi = Math.sin(phi * TAU / 360);
+  var cos_phi = Math.cos(phi * TAU / 360);
+
+  // Make sure radii are valid
+  //
+  var x1p =  cos_phi*(x1-x2)/2 + sin_phi*(y1-y2)/2;
+  var y1p = -sin_phi*(x1-x2)/2 + cos_phi*(y1-y2)/2;
+
+  if (x1p === 0 && y1p === 0) {
+    // we're asked to draw line to itself
+    return [];
+  }
+
+  if (rx === 0 || ry === 0) {
+    // one of the radii is zero
+    return [];
+  }
+
+
+  // Compensate out-of-range radii
+  //
+  rx = Math.abs(rx);
+  ry = Math.abs(ry);
+
+  var lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+  if (lambda > 1) {
+    rx *= Math.sqrt(lambda);
+    ry *= Math.sqrt(lambda);
+  }
+
+
+  // Get center parameters (cx, cy, theta1, delta_theta)
+  //
+  var cc = get_arc_center(x1, y1, x2, y2, fa, fs, rx, ry, sin_phi, cos_phi);
+
+  var result = [];
+  var theta1 = cc[2];
+  var delta_theta = cc[3];
+
+  // Split an arc to multiple segments, so each segment
+  // will be less than τ/4 (= 90°)
+  //
+  var segments = Math.max(Math.ceil(Math.abs(delta_theta) / (TAU / 4)), 1);
+  delta_theta /= segments;
+
+  for (var i = 0; i < segments; i++) {
+    result.push(approximate_unit_arc(theta1, delta_theta));
+    theta1 += delta_theta;
+  }
+
+  // We have a bezier approximation of a unit circle,
+  // now need to transform back to the original ellipse
+  //
+  return result.map(function (curve) {
+    for (var i = 0; i < curve.length; i += 2) {
+      var x = curve[i + 0];
+      var y = curve[i + 1];
+
+      // scale
+      x *= rx;
+      y *= ry;
+
+      // rotate
+      var xp = cos_phi*x - sin_phi*y;
+      var yp = sin_phi*x + cos_phi*y;
+
+      // translate
+      curve[i + 0] = xp + cc[0];
+      curve[i + 1] = yp + cc[1];
+    }
+
+    return curve;
+  });
+};
+
+},{}],25:[function(require,module,exports){
+'use strict';
+
+/* eslint-disable space-infix-ops */
+
+// The precision used to consider an ellipse as a circle
+//
+var epsilon = 0.0000000001;
+
+// To convert degree in radians
+//
+var torad = Math.PI / 180;
+
+// Class constructor :
+//  an ellipse centred at 0 with radii rx,ry and x - axis - angle ax.
+//
+function Ellipse(rx, ry, ax) {
+  if (!(this instanceof Ellipse)) { return new Ellipse(rx, ry, ax); }
+  this.rx = rx;
+  this.ry = ry;
+  this.ax = ax;
+}
+
+// Apply a linear transform m to the ellipse
+// m is an array representing a matrix :
+//    -         -
+//   | m[0] m[2] |
+//   | m[1] m[3] |
+//    -         -
+//
+Ellipse.prototype.transform = function (m) {
+  // We consider the current ellipse as image of the unit circle
+  // by first scale(rx,ry) and then rotate(ax) ...
+  // So we apply ma =  m x rotate(ax) x scale(rx,ry) to the unit circle.
+  var c = Math.cos(this.ax * torad), s = Math.sin(this.ax * torad);
+  var ma = [
+    this.rx * (m[0]*c + m[2]*s),
+    this.rx * (m[1]*c + m[3]*s),
+    this.ry * (-m[0]*s + m[2]*c),
+    this.ry * (-m[1]*s + m[3]*c)
+  ];
+
+  // ma * transpose(ma) = [ J L ]
+  //                      [ L K ]
+  // L is calculated later (if the image is not a circle)
+  var J = ma[0]*ma[0] + ma[2]*ma[2],
+      K = ma[1]*ma[1] + ma[3]*ma[3];
+
+  // the discriminant of the characteristic polynomial of ma * transpose(ma)
+  var D = ((ma[0]-ma[3])*(ma[0]-ma[3]) + (ma[2]+ma[1])*(ma[2]+ma[1])) *
+          ((ma[0]+ma[3])*(ma[0]+ma[3]) + (ma[2]-ma[1])*(ma[2]-ma[1]));
+
+  // the "mean eigenvalue"
+  var JK = (J + K) / 2;
+
+  // check if the image is (almost) a circle
+  if (D < epsilon * JK) {
+    // if it is
+    this.rx = this.ry = Math.sqrt(JK);
+    this.ax = 0;
+    return this;
+  }
+
+  // if it is not a circle
+  var L = ma[0]*ma[1] + ma[2]*ma[3];
+
+  D = Math.sqrt(D);
+
+  // {l1,l2} = the two eigen values of ma * transpose(ma)
+  var l1 = JK + D/2,
+      l2 = JK - D/2;
+  // the x - axis - rotation angle is the argument of the l1 - eigenvector
+  /*eslint-disable indent*/
+  this.ax = (Math.abs(L) < epsilon && Math.abs(l1 - K) < epsilon) ?
+    90
+  :
+    Math.atan(Math.abs(L) > Math.abs(l1 - K) ?
+      (l1 - J) / L
+    :
+      L / (l1 - K)
+    ) * 180 / Math.PI;
+  /*eslint-enable indent*/
+
+  // if ax > 0 => rx = sqrt(l1), ry = sqrt(l2), else exchange axes and ax += 90
+  if (this.ax >= 0) {
+    // if ax in [0,90]
+    this.rx = Math.sqrt(l1);
+    this.ry = Math.sqrt(l2);
+  } else {
+    // if ax in ]-90,0[ => exchange axes
+    this.ax += 90;
+    this.rx = Math.sqrt(l2);
+    this.ry = Math.sqrt(l1);
+  }
+
+  return this;
+};
+
+// Check if the ellipse is (almost) degenerate, i.e. rx = 0 or ry = 0
+//
+Ellipse.prototype.isDegenerate = function () {
+  return (this.rx < epsilon * this.ry || this.ry < epsilon * this.rx);
+};
+
+module.exports = Ellipse;
+
+},{}],26:[function(require,module,exports){
+'use strict';
+
+// combine 2 matrixes
+// m1, m2 - [a, b, c, d, e, g]
+//
+function combine(m1, m2) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5]
+  ];
+}
+
+
+function Matrix() {
+  if (!(this instanceof Matrix)) { return new Matrix(); }
+  this.queue = [];   // list of matrixes to apply
+  this.cache = null; // combined matrix cache
+}
+
+
+Matrix.prototype.matrix = function (m) {
+  if (m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0) {
+    return this;
+  }
+  this.cache = null;
+  this.queue.push(m);
+  return this;
+};
+
+
+Matrix.prototype.translate = function (tx, ty) {
+  if (tx !== 0 || ty !== 0) {
+    this.cache = null;
+    this.queue.push([ 1, 0, 0, 1, tx, ty ]);
+  }
+  return this;
+};
+
+
+Matrix.prototype.scale = function (sx, sy) {
+  if (sx !== 1 || sy !== 1) {
+    this.cache = null;
+    this.queue.push([ sx, 0, 0, sy, 0, 0 ]);
+  }
+  return this;
+};
+
+
+Matrix.prototype.rotate = function (angle, rx, ry) {
+  var rad, cos, sin;
+
+  if (angle !== 0) {
+    this.translate(rx, ry);
+
+    rad = angle * Math.PI / 180;
+    cos = Math.cos(rad);
+    sin = Math.sin(rad);
+
+    this.queue.push([ cos, sin, -sin, cos, 0, 0 ]);
+    this.cache = null;
+
+    this.translate(-rx, -ry);
+  }
+  return this;
+};
+
+
+Matrix.prototype.skewX = function (angle) {
+  if (angle !== 0) {
+    this.cache = null;
+    this.queue.push([ 1, 0, Math.tan(angle * Math.PI / 180), 1, 0, 0 ]);
+  }
+  return this;
+};
+
+
+Matrix.prototype.skewY = function (angle) {
+  if (angle !== 0) {
+    this.cache = null;
+    this.queue.push([ 1, Math.tan(angle * Math.PI / 180), 0, 1, 0, 0 ]);
+  }
+  return this;
+};
+
+
+// Flatten queue
+//
+Matrix.prototype.toArray = function () {
+  if (this.cache) {
+    return this.cache;
+  }
+
+  if (!this.queue.length) {
+    this.cache = [ 1, 0, 0, 1, 0, 0 ];
+    return this.cache;
+  }
+
+  this.cache = this.queue[0];
+
+  if (this.queue.length === 1) {
+    return this.cache;
+  }
+
+  for (var i = 1; i < this.queue.length; i++) {
+    this.cache = combine(this.cache, this.queue[i]);
+  }
+
+  return this.cache;
+};
+
+
+// Apply list of matrixes to (x,y) point.
+// If `isRelative` set, `translate` component of matrix will be skipped
+//
+Matrix.prototype.calc = function (x, y, isRelative) {
+  var m;
+
+  // Don't change point on empty transforms queue
+  if (!this.queue.length) { return [ x, y ]; }
+
+  // Calculate final matrix, if not exists
+  //
+  // NB. if you deside to apply transforms to point one-by-one,
+  // they should be taken in reverse order
+
+  if (!this.cache) {
+    this.cache = this.toArray();
+  }
+
+  m = this.cache;
+
+  // Apply matrix to point
+  return [
+    x * m[0] + y * m[2] + (isRelative ? 0 : m[4]),
+    x * m[1] + y * m[3] + (isRelative ? 0 : m[5])
+  ];
+};
+
+
+module.exports = Matrix;
+
+},{}],27:[function(require,module,exports){
+'use strict';
+
+
+var paramCounts = { a: 7, c: 6, h: 1, l: 2, m: 2, r: 4, q: 4, s: 4, t: 2, v: 1, z: 0 };
+
+var SPECIAL_SPACES = [
+  0x1680, 0x180E, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
+  0x2007, 0x2008, 0x2009, 0x200A, 0x202F, 0x205F, 0x3000, 0xFEFF
+];
+
+function isSpace(ch) {
+  return (ch === 0x0A) || (ch === 0x0D) || (ch === 0x2028) || (ch === 0x2029) || // Line terminators
+    // White spaces
+    (ch === 0x20) || (ch === 0x09) || (ch === 0x0B) || (ch === 0x0C) || (ch === 0xA0) ||
+    (ch >= 0x1680 && SPECIAL_SPACES.indexOf(ch) >= 0);
+}
+
+function isCommand(code) {
+  /*eslint-disable no-bitwise*/
+  switch (code | 0x20) {
+    case 0x6D/* m */:
+    case 0x7A/* z */:
+    case 0x6C/* l */:
+    case 0x68/* h */:
+    case 0x76/* v */:
+    case 0x63/* c */:
+    case 0x73/* s */:
+    case 0x71/* q */:
+    case 0x74/* t */:
+    case 0x61/* a */:
+    case 0x72/* r */:
+      return true;
+  }
+  return false;
+}
+
+function isDigit(code) {
+  return (code >= 48 && code <= 57);   // 0..9
+}
+
+function isDigitStart(code) {
+  return (code >= 48 && code <= 57) || /* 0..9 */
+          code === 0x2B || /* + */
+          code === 0x2D || /* - */
+          code === 0x2E;   /* . */
+}
+
+
+function State(path) {
+  this.index  = 0;
+  this.path   = path;
+  this.max    = path.length;
+  this.result = [];
+  this.param  = 0.0;
+  this.err    = '';
+  this.segmentStart = 0;
+  this.data   = [];
+}
+
+function skipSpaces(state) {
+  while (state.index < state.max && isSpace(state.path.charCodeAt(state.index))) {
+    state.index++;
+  }
+}
+
+
+function scanParam(state) {
+  var start = state.index,
+      index = start,
+      max = state.max,
+      zeroFirst = false,
+      hasCeiling = false,
+      hasDecimal = false,
+      hasDot = false,
+      ch;
+
+  if (index >= max) {
+    state.err = 'SvgPath: missed param (at pos ' + index + ')';
+    return;
+  }
+  ch = state.path.charCodeAt(index);
+
+  if (ch === 0x2B/* + */ || ch === 0x2D/* - */) {
+    index++;
+    ch = (index < max) ? state.path.charCodeAt(index) : 0;
+  }
+
+  // This logic is shamelessly borrowed from Esprima
+  // https://github.com/ariya/esprimas
+  //
+  if (!isDigit(ch) && ch !== 0x2E/* . */) {
+    state.err = 'SvgPath: param should start with 0..9 or `.` (at pos ' + index + ')';
+    return;
+  }
+
+  if (ch !== 0x2E/* . */) {
+    zeroFirst = (ch === 0x30/* 0 */);
+    index++;
+
+    ch = (index < max) ? state.path.charCodeAt(index) : 0;
+
+    if (zeroFirst && index < max) {
+      // decimal number starts with '0' such as '09' is illegal.
+      if (ch && isDigit(ch)) {
+        state.err = 'SvgPath: numbers started with `0` such as `09` are ilegal (at pos ' + start + ')';
+        return;
+      }
+    }
+
+    while (index < max && isDigit(state.path.charCodeAt(index))) {
+      index++;
+      hasCeiling = true;
+    }
+    ch = (index < max) ? state.path.charCodeAt(index) : 0;
+  }
+
+  if (ch === 0x2E/* . */) {
+    hasDot = true;
+    index++;
+    while (isDigit(state.path.charCodeAt(index))) {
+      index++;
+      hasDecimal = true;
+    }
+    ch = (index < max) ? state.path.charCodeAt(index) : 0;
+  }
+
+  if (ch === 0x65/* e */ || ch === 0x45/* E */) {
+    if (hasDot && !hasCeiling && !hasDecimal) {
+      state.err = 'SvgPath: invalid float exponent (at pos ' + index + ')';
+      return;
+    }
+
+    index++;
+
+    ch = (index < max) ? state.path.charCodeAt(index) : 0;
+    if (ch === 0x2B/* + */ || ch === 0x2D/* - */) {
+      index++;
+    }
+    if (index < max && isDigit(state.path.charCodeAt(index))) {
+      while (index < max && isDigit(state.path.charCodeAt(index))) {
+        index++;
+      }
+    } else {
+      state.err = 'SvgPath: invalid float exponent (at pos ' + index + ')';
+      return;
+    }
+  }
+
+  state.index = index;
+  state.param = parseFloat(state.path.slice(start, index)) + 0.0;
+}
+
+
+function finalizeSegment(state) {
+  var cmd, cmdLC;
+
+  // Process duplicated commands (without comand name)
+
+  // This logic is shamelessly borrowed from Raphael
+  // https://github.com/DmitryBaranovskiy/raphael/
+  //
+  cmd   = state.path[state.segmentStart];
+  cmdLC = cmd.toLowerCase();
+
+  var params = state.data;
+
+  if (cmdLC === 'm' && params.length > 2) {
+    state.result.push([ cmd, params[0], params[1] ]);
+    params = params.slice(2);
+    cmdLC = 'l';
+    cmd = (cmd === 'm') ? 'l' : 'L';
+  }
+
+  if (cmdLC === 'r') {
+    state.result.push([ cmd ].concat(params));
+  } else {
+
+    while (params.length >= paramCounts[cmdLC]) {
+      state.result.push([ cmd ].concat(params.splice(0, paramCounts[cmdLC])));
+      if (!paramCounts[cmdLC]) {
+        break;
+      }
+    }
+  }
+}
+
+
+function scanSegment(state) {
+  var max = state.max,
+      cmdCode, comma_found, need_params, i;
+
+  state.segmentStart = state.index;
+  cmdCode = state.path.charCodeAt(state.index);
+
+  if (!isCommand(cmdCode)) {
+    state.err = 'SvgPath: bad command ' + state.path[state.index] + ' (at pos ' + state.index + ')';
+    return;
+  }
+
+  need_params = paramCounts[state.path[state.index].toLowerCase()];
+
+  state.index++;
+  skipSpaces(state);
+
+  state.data = [];
+
+  if (!need_params) {
+    // Z
+    finalizeSegment(state);
+    return;
+  }
+
+  comma_found = false;
+
+  for (;;) {
+    for (i = need_params; i > 0; i--) {
+      scanParam(state);
+      if (state.err.length) {
+        return;
+      }
+      state.data.push(state.param);
+
+      skipSpaces(state);
+      comma_found = false;
+
+      if (state.index < max && state.path.charCodeAt(state.index) === 0x2C/* , */) {
+        state.index++;
+        skipSpaces(state);
+        comma_found = true;
+      }
+    }
+
+    // after ',' param is mandatory
+    if (comma_found) {
+      continue;
+    }
+
+    if (state.index >= state.max) {
+      break;
+    }
+
+    // Stop on next segment
+    if (!isDigitStart(state.path.charCodeAt(state.index))) {
+      break;
+    }
+  }
+
+  finalizeSegment(state);
+}
+
+
+/* Returns array of segments:
+ *
+ * [
+ *   [ command, coord1, coord2, ... ]
+ * ]
+ */
+module.exports = function pathParse(svgPath) {
+  var state = new State(svgPath);
+  var max = state.max;
+
+  skipSpaces(state);
+
+  while (state.index < max && !state.err.length) {
+    scanSegment(state);
+  }
+
+  if (state.err.length) {
+    state.result = [];
+
+  } else if (state.result.length) {
+
+    if ('mM'.indexOf(state.result[0][0]) < 0) {
+      state.err = 'SvgPath: string should start with `M` or `m`';
+      state.result = [];
+    } else {
+      state.result[0][0] = 'M';
+    }
+  }
+
+  return {
+    err: state.err,
+    segments: state.result
+  };
+};
+
+},{}],28:[function(require,module,exports){
+// SVG Path transformations library
+//
+// Usage:
+//
+//    SvgPath('...')
+//      .translate(-150, -100)
+//      .scale(0.5)
+//      .translate(-150, -100)
+//      .toFixed(1)
+//      .toString()
+//
+
+'use strict';
+
+
+var pathParse      = require('./path_parse');
+var transformParse = require('./transform_parse');
+var matrix         = require('./matrix');
+var a2c            = require('./a2c');
+var ellipse        = require('./ellipse');
+
+
+// Class constructor
+//
+function SvgPath(path) {
+  if (!(this instanceof SvgPath)) { return new SvgPath(path); }
+
+  var pstate = pathParse(path);
+
+  // Array of path segments.
+  // Each segment is array [command, param1, param2, ...]
+  this.segments = pstate.segments;
+
+  // Error message on parse error.
+  this.err      = pstate.err;
+
+  // Transforms stack for lazy evaluation
+  this.__stack    = [];
+}
+
+
+SvgPath.prototype.__matrix = function (m) {
+  var self = this, i;
+
+  // Quick leave for empty matrix
+  if (!m.queue.length) { return; }
+
+  this.iterate(function (s, index, x, y) {
+    var p, result, name, isRelative;
+
+    switch (s[0]) {
+
+      // Process 'assymetric' commands separately
+      case 'v':
+        p      = m.calc(0, s[1], true);
+        result = (p[0] === 0) ? [ 'v', p[1] ] : [ 'l', p[0], p[1] ];
+        break;
+
+      case 'V':
+        p      = m.calc(x, s[1], false);
+        result = (p[0] === m.calc(x, y, false)[0]) ? [ 'V', p[1] ] : [ 'L', p[0], p[1] ];
+        break;
+
+      case 'h':
+        p      = m.calc(s[1], 0, true);
+        result = (p[1] === 0) ? [ 'h', p[0] ] : [ 'l', p[0], p[1] ];
+        break;
+
+      case 'H':
+        p      = m.calc(s[1], y, false);
+        result = (p[1] === m.calc(x, y, false)[1]) ? [ 'H', p[0] ] : [ 'L', p[0], p[1] ];
+        break;
+
+      case 'a':
+      case 'A':
+        // ARC is: ['A', rx, ry, x-axis-rotation, large-arc-flag, sweep-flag, x, y]
+
+        // Drop segment if arc is empty (end point === start point)
+        /*if ((s[0] === 'A' && s[6] === x && s[7] === y) ||
+            (s[0] === 'a' && s[6] === 0 && s[7] === 0)) {
+          return [];
+        }*/
+
+        // Transform rx, ry and the x-axis-rotation
+        var ma = m.toArray();
+        var e = ellipse(s[1], s[2], s[3]).transform(ma);
+
+        // flip sweep-flag if matrix is not orientation-preserving
+        if (ma[0] * ma[3] - ma[1] * ma[2] < 0) {
+          s[5] = s[5] ? '0' : '1';
+        }
+
+        // Transform end point as usual (without translation for relative notation)
+        p = m.calc(s[6], s[7], s[0] === 'a');
+
+        // Empty arcs can be ignored by renderer, but should not be dropped
+        // to avoid collisions with `S A S` and so on. Replace with empty line.
+        if ((s[0] === 'A' && s[6] === x && s[7] === y) ||
+            (s[0] === 'a' && s[6] === 0 && s[7] === 0)) {
+          result = [ s[0] === 'a' ? 'l' : 'L', p[0], p[1] ];
+          break;
+        }
+
+        // if the resulting ellipse is (almost) a segment ...
+        if (e.isDegenerate()) {
+          // replace the arc by a line
+          result = [ s[0] === 'a' ? 'l' : 'L', p[0], p[1] ];
+        } else {
+          // if it is a real ellipse
+          // s[0], s[4] and s[5] are not modified
+          result = [ s[0], e.rx, e.ry, e.ax, s[4], s[5], p[0], p[1] ];
+        }
+
+        break;
+
+      case 'm':
+        // Edge case. The very first `m` should be processed as absolute, if happens.
+        // Make sense for coord shift transforms.
+        isRelative = index > 0;
+
+        p = m.calc(s[1], s[2], isRelative);
+        result = [ 'm', p[0], p[1] ];
+        break;
+
+      default:
+        name       = s[0];
+        result     = [ name ];
+        isRelative = (name.toLowerCase() === name);
+
+        // Apply transformations to the segment
+        for (i = 1; i < s.length; i += 2) {
+          p = m.calc(s[i], s[i + 1], isRelative);
+          result.push(p[0], p[1]);
+        }
+    }
+
+    self.segments[index] = result;
+  }, true);
+};
+
+
+// Apply stacked commands
+//
+SvgPath.prototype.__evaluateStack = function () {
+  var m, i;
+
+  if (!this.__stack.length) { return; }
+
+  if (this.__stack.length === 1) {
+    this.__matrix(this.__stack[0]);
+    this.__stack = [];
+    return;
+  }
+
+  m = matrix();
+  i = this.__stack.length;
+
+  while (--i >= 0) {
+    m.matrix(this.__stack[i].toArray());
+  }
+
+  this.__matrix(m);
+  this.__stack = [];
+};
+
+
+// Convert processed SVG Path back to string
+//
+SvgPath.prototype.toString = function () {
+  var elements = [], skipCmd, cmd;
+
+  this.__evaluateStack();
+
+  for (var i = 0; i < this.segments.length; i++) {
+    // remove repeating commands names
+    cmd = this.segments[i][0];
+    skipCmd = i > 0 && cmd !== 'm' && cmd !== 'M' && cmd === this.segments[i - 1][0];
+    elements = elements.concat(skipCmd ? this.segments[i].slice(1) : this.segments[i]);
+  }
+
+  return elements.join(' ')
+    // Optimizations: remove spaces around commands & before `-`
+    //
+    // We could also remove leading zeros for `0.5`-like values,
+    // but their count is too small to spend time for.
+    .replace(/ ?([achlmqrstvz]) ?/gi, '$1')
+    .replace(/ \-/g, '-')
+    // workaround for FontForge SVG importing bug
+    .replace(/zm/g, 'z m');
+};
+
+
+// Translate path to (x [, y])
+//
+SvgPath.prototype.translate = function (x, y) {
+  this.__stack.push(matrix().translate(x, y || 0));
+  return this;
+};
+
+
+// Scale path to (sx [, sy])
+// sy = sx if not defined
+//
+SvgPath.prototype.scale = function (sx, sy) {
+  this.__stack.push(matrix().scale(sx, (!sy && (sy !== 0)) ? sx : sy));
+  return this;
+};
+
+
+// Rotate path around point (sx [, sy])
+// sy = sx if not defined
+//
+SvgPath.prototype.rotate = function (angle, rx, ry) {
+  this.__stack.push(matrix().rotate(angle, rx || 0, ry || 0));
+  return this;
+};
+
+
+// Skew path along the X axis by `degrees` angle
+//
+SvgPath.prototype.skewX = function (degrees) {
+  this.__stack.push(matrix().skewX(degrees));
+  return this;
+};
+
+
+// Skew path along the Y axis by `degrees` angle
+//
+SvgPath.prototype.skewY = function (degrees) {
+  this.__stack.push(matrix().skewY(degrees));
+  return this;
+};
+
+
+// Apply matrix transform (array of 6 elements)
+//
+SvgPath.prototype.matrix = function (m) {
+  this.__stack.push(matrix().matrix(m));
+  return this;
+};
+
+
+// Transform path according to "transform" attr of SVG spec
+//
+SvgPath.prototype.transform = function (transformString) {
+  if (!transformString.trim()) {
+    return this;
+  }
+  this.__stack.push(transformParse(transformString));
+  return this;
+};
+
+
+// Round coords with given decimal precition.
+// 0 by default (to integers)
+//
+SvgPath.prototype.round = function (d) {
+  var contourStartDeltaX = 0, contourStartDeltaY = 0, deltaX = 0, deltaY = 0, l;
+
+  d = d || 0;
+
+  this.__evaluateStack();
+
+  this.segments.forEach(function (s) {
+    var isRelative = (s[0].toLowerCase() === s[0]);
+
+    switch (s[0]) {
+      case 'H':
+      case 'h':
+        if (isRelative) { s[1] += deltaX; }
+        deltaX = s[1] - s[1].toFixed(d);
+        s[1] = +s[1].toFixed(d);
+        return;
+
+      case 'V':
+      case 'v':
+        if (isRelative) { s[1] += deltaY; }
+        deltaY = s[1] - s[1].toFixed(d);
+        s[1] = +s[1].toFixed(d);
+        return;
+
+      case 'Z':
+      case 'z':
+        deltaX = contourStartDeltaX;
+        deltaY = contourStartDeltaY;
+        return;
+
+      case 'M':
+      case 'm':
+        if (isRelative) {
+          s[1] += deltaX;
+          s[2] += deltaY;
+        }
+
+        deltaX = s[1] - s[1].toFixed(d);
+        deltaY = s[2] - s[2].toFixed(d);
+
+        contourStartDeltaX = deltaX;
+        contourStartDeltaY = deltaY;
+
+        s[1] = +s[1].toFixed(d);
+        s[2] = +s[2].toFixed(d);
+        return;
+
+      case 'A':
+      case 'a':
+        // [cmd, rx, ry, x-axis-rotation, large-arc-flag, sweep-flag, x, y]
+        if (isRelative) {
+          s[6] += deltaX;
+          s[7] += deltaY;
+        }
+
+        deltaX = s[6] - s[6].toFixed(d);
+        deltaY = s[7] - s[7].toFixed(d);
+
+        s[1] = +s[1].toFixed(d);
+        s[2] = +s[2].toFixed(d);
+        s[3] = +s[3].toFixed(d + 2); // better precision for rotation
+        s[6] = +s[6].toFixed(d);
+        s[7] = +s[7].toFixed(d);
+        return;
+
+      default:
+        // a c l q s t
+        l = s.length;
+
+        if (isRelative) {
+          s[l - 2] += deltaX;
+          s[l - 1] += deltaY;
+        }
+
+        deltaX = s[l - 2] - s[l - 2].toFixed(d);
+        deltaY = s[l - 1] - s[l - 1].toFixed(d);
+
+        s.forEach(function (val, i) {
+          if (!i) { return; }
+          s[i] = +s[i].toFixed(d);
+        });
+        return;
+    }
+  });
+
+  return this;
+};
+
+
+// Apply iterator function to all segments. If function returns result,
+// current segment will be replaced to array of returned segments.
+// If empty array is returned, current regment will be deleted.
+//
+SvgPath.prototype.iterate = function (iterator, keepLazyStack) {
+  var segments = this.segments,
+      replacements = {},
+      needReplace = false,
+      lastX = 0,
+      lastY = 0,
+      countourStartX = 0,
+      countourStartY = 0;
+  var i, j, newSegments;
+
+  if (!keepLazyStack) {
+    this.__evaluateStack();
+  }
+
+  segments.forEach(function (s, index) {
+
+    var res = iterator(s, index, lastX, lastY);
+
+    if (Array.isArray(res)) {
+      replacements[index] = res;
+      needReplace = true;
+    }
+
+    var isRelative = (s[0] === s[0].toLowerCase());
+
+    // calculate absolute X and Y
+    switch (s[0]) {
+      case 'm':
+      case 'M':
+        lastX = s[1] + (isRelative ? lastX : 0);
+        lastY = s[2] + (isRelative ? lastY : 0);
+        countourStartX = lastX;
+        countourStartY = lastY;
+        return;
+
+      case 'h':
+      case 'H':
+        lastX = s[1] + (isRelative ? lastX : 0);
+        return;
+
+      case 'v':
+      case 'V':
+        lastY = s[1] + (isRelative ? lastY : 0);
+        return;
+
+      case 'z':
+      case 'Z':
+        // That make sence for multiple contours
+        lastX = countourStartX;
+        lastY = countourStartY;
+        return;
+
+      default:
+        lastX = s[s.length - 2] + (isRelative ? lastX : 0);
+        lastY = s[s.length - 1] + (isRelative ? lastY : 0);
+    }
+  });
+
+  // Replace segments if iterator return results
+
+  if (!needReplace) { return this; }
+
+  newSegments = [];
+
+  for (i = 0; i < segments.length; i++) {
+    if (typeof replacements[i] !== 'undefined') {
+      for (j = 0; j < replacements[i].length; j++) {
+        newSegments.push(replacements[i][j]);
+      }
+    } else {
+      newSegments.push(segments[i]);
+    }
+  }
+
+  this.segments = newSegments;
+
+  return this;
+};
+
+
+// Converts segments from relative to absolute
+//
+SvgPath.prototype.abs = function () {
+
+  this.iterate(function (s, index, x, y) {
+    var name = s[0],
+        nameUC = name.toUpperCase(),
+        i;
+
+    // Skip absolute commands
+    if (name === nameUC) { return; }
+
+    s[0] = nameUC;
+
+    switch (name) {
+      case 'v':
+        // v has shifted coords parity
+        s[1] += y;
+        return;
+
+      case 'a':
+        // ARC is: ['A', rx, ry, x-axis-rotation, large-arc-flag, sweep-flag, x, y]
+        // touch x, y only
+        s[6] += x;
+        s[7] += y;
+        return;
+
+      default:
+        for (i = 1; i < s.length; i++) {
+          s[i] += i % 2 ? x : y; // odd values are X, even - Y
+        }
+    }
+  }, true);
+
+  return this;
+};
+
+
+// Converts segments from absolute to relative
+//
+SvgPath.prototype.rel = function () {
+
+  this.iterate(function (s, index, x, y) {
+    var name = s[0],
+        nameLC = name.toLowerCase(),
+        i;
+
+    // Skip relative commands
+    if (name === nameLC) { return; }
+
+    // Don't touch the first M to avoid potential confusions.
+    if (index === 0 && name === 'M') { return; }
+
+    s[0] = nameLC;
+
+    switch (name) {
+      case 'V':
+        // V has shifted coords parity
+        s[1] -= y;
+        return;
+
+      case 'A':
+        // ARC is: ['A', rx, ry, x-axis-rotation, large-arc-flag, sweep-flag, x, y]
+        // touch x, y only
+        s[6] -= x;
+        s[7] -= y;
+        return;
+
+      default:
+        for (i = 1; i < s.length; i++) {
+          s[i] -= i % 2 ? x : y; // odd values are X, even - Y
+        }
+    }
+  }, true);
+
+  return this;
+};
+
+
+// Converts arcs to cubic bézier curves
+//
+SvgPath.prototype.unarc = function () {
+  this.iterate(function (s, index, x, y) {
+    var new_segments, nextX, nextY, result = [], name = s[0];
+
+    // Skip anything except arcs
+    if (name !== 'A' && name !== 'a') { return null; }
+
+    if (name === 'a') {
+      // convert relative arc coordinates to absolute
+      nextX = x + s[6];
+      nextY = y + s[7];
+    } else {
+      nextX = s[6];
+      nextY = s[7];
+    }
+
+    new_segments = a2c(x, y, nextX, nextY, s[4], s[5], s[1], s[2], s[3]);
+
+    // Degenerated arcs can be ignored by renderer, but should not be dropped
+    // to avoid collisions with `S A S` and so on. Replace with empty line.
+    if (new_segments.length === 0) {
+      return [ [ s[0] === 'a' ? 'l' : 'L', s[6], s[7] ] ];
+    }
+
+    new_segments.forEach(function (s) {
+      result.push([ 'C', s[2], s[3], s[4], s[5], s[6], s[7] ]);
+    });
+
+    return result;
+  });
+
+  return this;
+};
+
+
+// Converts smooth curves (with missed control point) to generic curves
+//
+SvgPath.prototype.unshort = function () {
+  var segments = this.segments;
+  var prevControlX, prevControlY, prevSegment;
+  var curControlX, curControlY;
+
+  // TODO: add lazy evaluation flag when relative commands supported
+
+  this.iterate(function (s, idx, x, y) {
+    var name = s[0], nameUC = name.toUpperCase(), isRelative;
+
+    // First command MUST be M|m, it's safe to skip.
+    // Protect from access to [-1] for sure.
+    if (!idx) { return; }
+
+    if (nameUC === 'T') { // quadratic curve
+      isRelative = (name === 't');
+
+      prevSegment = segments[idx - 1];
+
+      if (prevSegment[0] === 'Q') {
+        prevControlX = prevSegment[1] - x;
+        prevControlY = prevSegment[2] - y;
+      } else if (prevSegment[0] === 'q') {
+        prevControlX = prevSegment[1] - prevSegment[3];
+        prevControlY = prevSegment[2] - prevSegment[4];
+      } else {
+        prevControlX = 0;
+        prevControlY = 0;
+      }
+
+      curControlX = -prevControlX;
+      curControlY = -prevControlY;
+
+      if (!isRelative) {
+        curControlX += x;
+        curControlY += y;
+      }
+
+      segments[idx] = [
+        isRelative ? 'q' : 'Q',
+        curControlX, curControlY,
+        s[1], s[2]
+      ];
+
+    } else if (nameUC === 'S') { // cubic curve
+      isRelative = (name === 's');
+
+      prevSegment = segments[idx - 1];
+
+      if (prevSegment[0] === 'C') {
+        prevControlX = prevSegment[3] - x;
+        prevControlY = prevSegment[4] - y;
+      } else if (prevSegment[0] === 'c') {
+        prevControlX = prevSegment[3] - prevSegment[5];
+        prevControlY = prevSegment[4] - prevSegment[6];
+      } else {
+        prevControlX = 0;
+        prevControlY = 0;
+      }
+
+      curControlX = -prevControlX;
+      curControlY = -prevControlY;
+
+      if (!isRelative) {
+        curControlX += x;
+        curControlY += y;
+      }
+
+      segments[idx] = [
+        isRelative ? 'c' : 'C',
+        curControlX, curControlY,
+        s[1], s[2], s[3], s[4]
+      ];
+    }
+  });
+
+  return this;
+};
+
+
+module.exports = SvgPath;
+
+},{"./a2c":24,"./ellipse":25,"./matrix":26,"./path_parse":27,"./transform_parse":29}],29:[function(require,module,exports){
+'use strict';
+
+
+var Matrix = require('./matrix');
+
+var operations = {
+  matrix: true,
+  scale: true,
+  rotate: true,
+  translate: true,
+  skewX: true,
+  skewY: true
+};
+
+var CMD_SPLIT_RE    = /\s*(matrix|translate|scale|rotate|skewX|skewY)\s*\(\s*(.+?)\s*\)[\s,]*/;
+var PARAMS_SPLIT_RE = /[\s,]+/;
+
+
+module.exports = function transformParse(transformString) {
+  var matrix = new Matrix();
+  var cmd, params;
+
+  // Split value into ['', 'translate', '10 50', '', 'scale', '2', '', 'rotate',  '-45', '']
+  transformString.split(CMD_SPLIT_RE).forEach(function (item) {
+
+    // Skip empty elements
+    if (!item.length) { return; }
+
+    // remember operation
+    if (typeof operations[item] !== 'undefined') {
+      cmd = item;
+      return;
+    }
+
+    // extract params & att operation to matrix
+    params = item.split(PARAMS_SPLIT_RE).map(function (i) {
+      return +i || 0;
+    });
+
+    // If params count is not correct - ignore command
+    switch (cmd) {
+      case 'matrix':
+        if (params.length === 6) {
+          matrix.matrix(params);
+        }
+        return;
+
+      case 'scale':
+        if (params.length === 1) {
+          matrix.scale(params[0], params[0]);
+        } else if (params.length === 2) {
+          matrix.scale(params[0], params[1]);
+        }
+        return;
+
+      case 'rotate':
+        if (params.length === 1) {
+          matrix.rotate(params[0], 0, 0);
+        } else if (params.length === 3) {
+          matrix.rotate(params[0], params[1], params[2]);
+        }
+        return;
+
+      case 'translate':
+        if (params.length === 1) {
+          matrix.translate(params[0], 0);
+        } else if (params.length === 2) {
+          matrix.translate(params[0], params[1]);
+        }
+        return;
+
+      case 'skewX':
+        if (params.length === 1) {
+          matrix.skewX(params[0]);
+        }
+        return;
+
+      case 'skewY':
+        if (params.length === 1) {
+          matrix.skewY(params[0]);
+        }
+        return;
+    }
+  });
+
+  return matrix;
+};
+
+},{"./matrix":26}],30:[function(require,module,exports){
 'use strict';
 
 // t: current time, b: beginning value, _c: final value, d: total duration
@@ -2812,7 +4909,7 @@ var tweenFunctions = {
 
 module.exports = tweenFunctions;
 
-},{}],23:[function(require,module,exports){
+},{}],31:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -2856,7 +4953,7 @@ var clone = function clone(value) {
 };
 
 exports.default = clone;
-},{}],24:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -3273,7 +5370,7 @@ var limit = function limit(num, min, max) {
 };
 
 exports.default = { name: name, input: input, output: output };
-},{}],25:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -3311,7 +5408,7 @@ var config = {
 };
 
 exports.default = config;
-},{"./color-middleware":24,"./unit-middleware":37}],26:[function(require,module,exports){
+},{"./color-middleware":32,"./unit-middleware":45}],34:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -3366,7 +5463,7 @@ var easingFunction = function easingFunction(easing) {
 
 exports.default = easingFunction;
 }).call(this,require('_process'))
-},{"_process":17,"tween-functions":22}],27:[function(require,module,exports){
+},{"_process":18,"tween-functions":30}],35:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -3887,7 +5984,7 @@ exports.unsubscribe = unsubscribe;
 exports.validEventName = validEventName;
 exports.default = events;
 }).call(this,require('_process'))
-},{"./timeline":35,"_process":17}],28:[function(require,module,exports){
+},{"./timeline":43,"_process":18}],36:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -4482,7 +6579,7 @@ exports.splitLines = splitLines;
 exports.tween = tween;
 exports.default = frame;
 }).call(this,require('_process'))
-},{"./clone":23,"./middleware":31,"./timeline":35,"_process":17,"points":8,"svg-points":18}],29:[function(require,module,exports){
+},{"./clone":31,"./middleware":39,"./timeline":43,"_process":18,"points":9,"svg-points":19}],37:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -4534,7 +6631,7 @@ exports.play = _timeline.play;
 exports.shape = _shape2.default;
 exports.timeline = _timeline2.default;
 exports.unitMiddleware = _unitMiddleware2.default;
-},{"./color-middleware":24,"./events":27,"./frame":28,"./motion-path-force":32,"./plain-shape-object":33,"./shape":34,"./timeline":35,"./unit-middleware":37}],30:[function(require,module,exports){
+},{"./color-middleware":32,"./events":35,"./frame":36,"./motion-path-force":40,"./plain-shape-object":41,"./shape":42,"./timeline":43,"./unit-middleware":45}],38:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -4748,7 +6845,7 @@ var keyframesTotalDuration = function keyframesTotalDuration(k) {
 };
 
 exports.default = keyframesAndDuration;
-},{"./config":25,"./easing-function":26,"./frame":28,"./transform":36}],31:[function(require,module,exports){
+},{"./config":33,"./easing-function":34,"./frame":36,"./transform":44}],39:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -4848,7 +6945,7 @@ var output = function output(value, middleware) {
 
 exports.input = input;
 exports.output = output;
-},{}],32:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -4963,7 +7060,7 @@ var motionPath = function motionPath(plainShapeObject) {
 
 exports.default = motionPath;
 }).call(this,require('_process'))
-},{"./config":25,"./easing-function":26,"./plain-shape-object":33,"./transform":36,"_process":17,"points":8,"svg-points":18}],33:[function(require,module,exports){
+},{"./config":33,"./easing-function":34,"./plain-shape-object":41,"./transform":44,"_process":18,"points":9,"svg-points":19}],41:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -5403,7 +7500,7 @@ var valid = function valid() {
 exports.valid = valid;
 exports.default = plainShapeObject;
 }).call(this,require('_process'))
-},{"./frame":28,"_process":17,"svg-points":18}],34:[function(require,module,exports){
+},{"./frame":36,"_process":18,"svg-points":19}],42:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -5533,7 +7630,7 @@ var validProps = function validProps(_ref) {
 
 exports.default = shape;
 }).call(this,require('_process'))
-},{"./keyframe":30,"./plain-shape-object":33,"_process":17}],35:[function(require,module,exports){
+},{"./keyframe":38,"./plain-shape-object":41,"_process":18}],43:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -6350,7 +8447,7 @@ exports.sameDirection = sameDirection;
 exports.updateState = updateState;
 exports.default = timeline;
 }).call(this,require('_process'))
-},{"./clone":23,"./config":25,"./events":27,"./middleware":31,"_process":17}],36:[function(require,module,exports){
+},{"./clone":31,"./config":33,"./events":35,"./middleware":39,"_process":18}],44:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -6513,7 +8610,7 @@ exports.flattenPoints = flattenPoints;
 exports.pointsToFrameShape = pointsToFrameShape;
 exports.transformPoints = transformPoints;
 exports.default = transform;
-},{"points":8}],37:[function(require,module,exports){
+},{"points":9}],45:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -6596,7 +8693,7 @@ var output = function output(x) {
 };
 
 exports.default = { name: name, input: input, output: output };
-},{}],38:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -7115,7 +9212,7 @@ exports.node = node;
 exports.plainShapeObject = plainShapeObject;
 exports.updateNode = updateNode;
 }).call(this,require('_process'))
-},{"_process":17,"svg-points":18}],39:[function(require,module,exports){
+},{"_process":18,"svg-points":19}],47:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -7148,7 +9245,7 @@ exports.render = _render2.default;
 exports.shape = _shape2.default;
 exports.timeline = _timeline2.default;
 exports.unitMiddleware = _wildernessCore.unitMiddleware;
-},{"./render":40,"./shape":41,"./timeline":42,"wilderness-core":29}],40:[function(require,module,exports){
+},{"./render":48,"./shape":49,"./timeline":50,"wilderness-core":37}],48:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -7277,7 +9374,7 @@ var split = function split(shapesAndTimelines) {
 
 exports.default = render;
 }).call(this,require('_process'))
-},{"./timeline":42,"_process":17,"wilderness-core":29,"wilderness-dom-node":38}],41:[function(require,module,exports){
+},{"./timeline":50,"_process":18,"wilderness-core":37,"wilderness-dom-node":46}],49:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -7345,7 +9442,7 @@ var shape = function shape() {
 
 exports.default = shape;
 }).call(this,require('_process'))
-},{"_process":17,"wilderness-core":29,"wilderness-dom-node":38}],42:[function(require,module,exports){
+},{"_process":18,"wilderness-core":37,"wilderness-dom-node":46}],50:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -7453,7 +9550,7 @@ exports.play = play;
 exports.tick = tick;
 exports.default = timeline;
 }).call(this,require('_process'))
-},{"_process":17,"wilderness-core":29,"wilderness-dom-node":38}],43:[function(require,module,exports){
+},{"_process":18,"wilderness-core":37,"wilderness-dom-node":46}],51:[function(require,module,exports){
 /*****************************************************************************
  *                                                                            *
  *  SVG Path Rounding Function                                                *
